@@ -33,7 +33,7 @@ seed = 12345
 
 write_Summary = True
 show_plot = False
-write_to_disk = False
+write_to_disk = True
 
 # ########################################################################################
 # ########################################################################################
@@ -142,7 +142,7 @@ def extract_SED_from_FITS(ID, fileName, count):
 
         wl = np.ravel(hdulist['FULL SED WL'].data[0][:])
 
-        pdf = mass_sfr(np.log10(M_star), np.log10(SFR), template_redshifts)
+        pdf = mass_sfr(np.log10(M_star), np.log10(SFR), template_redshifts, distribution='gaussian')
 
         reweighted_pdf = post*pdf
 
@@ -179,6 +179,7 @@ def extract_SED_from_FITS(ID, fileName, count):
         summary['sSFR'] = np.zeros(n, dtype=np.float32)
         summary['posterior_PDF'] = np.zeros(n, dtype=np.float32)
         summary['reweighted_PDF'] = np.zeros(n, dtype=np.float32)
+        summary['UV_1500_FLAMBDA'] = np.zeros(n, dtype=np.float32)
 
         # Compute Ha and Hb integrated fluxes and EW
         for key, value in data_lines.iteritems():
@@ -198,6 +199,11 @@ def extract_SED_from_FITS(ID, fileName, count):
                 summary['reweighted_PDF'][i] = reweighted_pdf[indx]
 
                 SED = hdulist['FULL SED'].data[indx,:]
+
+                i0 = np.searchsorted(wl, 1450)
+                i1 = np.searchsorted(wl, 1550)
+                UV_1500 = np.trapz(SED[i0:i1+1], x=wl[i0:i1+1]) / (wl[i1]-wl[i0])
+                summary['UV_1500_FLAMBDA'][i] = UV_1500
 
                 for key, value in data_lines.iteritems():
 
@@ -273,7 +279,7 @@ data_lines['Hbeta'] = line
 width = 15.
 
 # Output folder, containing the simulated NIRSpec observations
-output_folder = "/home/jchevall/JWST/Simulations/Sep_2016/mass_SFR_weighted"
+output_folder = "/home/jchevall/JWST/Simulations/Sep_2016/mass_SFR_weighted_Gaussian"
 if not os.path.isdir(output_folder):
     os.makedirs(output_folder)
 
@@ -296,6 +302,7 @@ if write_Summary:
     summary_data['sSFR'] = np.zeros(n, dtype=np.float32)
     summary_data['posterior_PDF'] = np.zeros(n, dtype=np.float32)
     summary_data['reweighted_PDF'] = np.zeros(n, dtype=np.float32)
+    summary_data['UV_1500_FLAMBDA'] = np.zeros(n, dtype=np.float32)
 
     # Compute Ha and Hb integrated fluxes and EW
     for key, value in data_lines.iteritems():
