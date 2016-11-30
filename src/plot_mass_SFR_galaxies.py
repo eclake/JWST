@@ -9,8 +9,10 @@ from astropy.cosmology import FlatLambdaCDM
 from astropy.io import fits
 from itertools import izip as zip, count
 import scipy.stats as stats
+from walker_random_sampling import WalkerRandomSampling
+import argparse
 
-folder = "/Users/jchevall/JWST/Simulations/Sep_2016/mass_SFR_weighted_Gaussian"
+folder = ""
 
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 
@@ -28,23 +30,64 @@ def mass_SFR_relation(z, logM):
 
     return logSFR
 
-def plot_single_mass_SFR(fileName, ax, xPar, yPar, xLog, yLog):
+def sample_mass_SFR(logM, SFR, z):
+
+    mean = mass_SFR_relation(z, logM)
+
+    pdf = np.zeros(len(logM))
+    for i, value in enumerate(SFR):
+        pdf[i] = stats.norm.pdf(SFR[i], loc=mean[i], scale=0.3)
+
+    return pdf
+
+
+def plot_X_vs_Y(draw, xPar, yPar,
+        xlim=None, ylim=None, 
+        xLog=True, yLog=True,
+        xlabel=None, ylabel=None):
+
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1)
+
+    if xlabel is not None:
+        ax.set_xlabel(xlabel)
+    elif "M_star" in xPar["colName"]:
+        ax.set_xlabel('$\log(\\textnormal{M}_\\ast / \\textnormal{M}_\odot)$')
+    elif "M_tot" in xPar["colName"]:
+        ax.set_xlabel('$\log(\\textnormal{M}^\\textnormal{tot}_\\ast / \\textnormal{M}_\odot)$')
+    else:
+        ax.set_xlabel(xPar["colName"].replace("_", " "))
+
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+    elif "SFR" in yPar["colName"]:
+        ax.set_ylabel('$\log(\psi/\\textnormal{M}_\odot \, \\textnormal{yr}^{-1})$')
+    else:
+        ax.set_ylabel(yPar["colName"].replace("_", " "))
+
+    if xlim is not None:
+        ax.set_xlim(xlim)
+
+    if ylim is not None:
+        ax.set_ylim(ylim)
+
+    file = os.path.join(folder, "Summary_"+str(draw)+".fits")
 
     cm = plt.get_cmap('Spectral') 
 
-    cNorm  = colors.Normalize(vmin=0, vmax=len(dropout_bands))
+    cNorm  = colors.Normalize(vmin=0, vmax=10)
     scalarMap = cmx.ScalarMappable(norm=cNorm, cmap=cm)
 
-    hdulist = fits.open(fileName)
+    hdulist = fits.open(file)
 
-    IDs = hdulist[1].data['ID']
-    redshift = hdulist[1].data['z']
+    IDs = hdulist["META DATA"].data['ID']
+    redshift = hdulist['GALAXY PROPERTIES'].data['redshift']
 
-    if xPar.lower() == "uv_1500_flambda":
-        tmp = hdulist[1].data[xPar] / (1.+redshift)
+    if xPar["colName"].lower() == "uv_1500_flambda":
+        tmp = hdulist[xPar["extName"]].data[xPar["colName"]] / (1.+redshift)
         wl_central = 1500. * (1+redshift)
         xData = -2.5*np.log10(wl_central**2/c_light*tmp) - 48.6
-    elif xPar.lower() == "f160w":
+    elif xPar["colName"].lower() == "f160w":
         ff = "/Users/jchevall/Coding/BEAGLE/files/data/XDF/XDF_DROPOUTS_aper_corr.fits"
         hdutmp = fits.open(ff)
         tmpID = hdutmp[1].data['ID']
@@ -57,60 +100,81 @@ def plot_single_mass_SFR(fileName, ax, xPar, yPar, xLog, yLog):
         hdutmp.close()
         xData = F160
     else:
-        xData = hdulist[1].data[xPar]
+        xData = hdulist[xPar["extName"]].data[xPar["colName"]]
 
     if xLog:
         xData = np.log10(xData)
 
-    yData = hdulist[1].data[yPar]
+    yData = hdulist[yPar["extName"]].data[yPar["colName"]]
 
     if yLog:
         yData = np.log10(yData)
 
     MM = np.array(ax.get_xlim())
 
-    for i, dropout in enumerate(dropout_bands):
+    mean_redshift = np.mean(redshift)
 
-        colorVal = scalarMap.to_rgba(len(dropout_bands)-i)
-        indices = [j for j, s in enumerate(IDs) if 'XDF'+dropout+'-' in s]
+    colorVal = scalarMap.to_rgba(10-mean_redshift)
+    indices = range(len(redshift))
 
-        if yPar == "Halpha_flux":
-            n = len(np.where((xData[indices] < m_UV_lim) & (yData[indices] > Ha_threshold))[0])
-            n_tot = len(np.where((xData[indices] < m_UV_lim))[0])
+    if yPar["colName"] == "Halpha_flux":
+        n = len(np.where((xData[indices] < m_UV_lim) & (yData[indices] > Ha_threshold))[0])
+        n_tot = len(np.where((xData[indices] < m_UV_lim))[0])
 
-            ax.text(0.08, 0.95-i*0.05, "{:.2f}".format(1.*n/n_tot),
-                    horizontalalignment='left',
-                    verticalalignment='center',
-                    fontsize=14, color=colorVal, 
-                    weight="heavy",
-                    transform=ax.transAxes)
+        ax.text(0.08, 0.95-i*0.05, "{:.2f}".format(1.*n/n_tot),
+                horizontalalignment='left',
+                verticalalignment='center',
+                fontsize=14, color=colorVal, 
+                weight="heavy",
+                transform=ax.transAxes)
 
 
-        if xPar == "M_star" and yPar == "SFR":
-            lgS = mass_SFR_relation(dropout_redshift[i], MM)
-            ax.plot(MM,
-                    lgS,
-                    color=colorVal,
-                    lw=2,
-                    zorder=2)
+    if xPar["colName"] == "M_tot" and "SFR" in yPar["colName"]:
+        lgS = mass_SFR_relation(mean_redshift, MM)
+
+        X, Y = np.mgrid[6.:11.:50j, -4.:4.:50j]
+        positions = np.vstack([X.ravel(), Y.ravel()])
+        n_ = positions.shape[1]
+        redshift_ = mean_redshift
+        indices_ = np.arange(n_)
+
+        pdf_ = sample_mass_SFR(positions[0,:], positions[1,:], np.full(n_, redshift_))
+        wrand = WalkerRandomSampling(pdf_, keys=indices_)
+        sel = wrand.random(1000)
+
+        ax.plot(positions[0,sel],
+                positions[1,sel],
+                marker='o',
+                ls="",
+                ms=3,
+                alpha=0.6,
+                color=colorVal,
+                zorder=1
+                )
+
+        ax.plot(MM,
+                lgS,
+                color=colorVal,
+                lw=2,
+                zorder=3)
 
         ax.plot(xData[indices],
                 yData[indices],
                 marker='o',
                 ls="",
                 color=colorVal,
-                zorder=1
+                zorder=2
                 )
 
 
-        ax.text(0.05, 0.95-i*0.05, dropout,
+        ax.text(0.05, 0.95, "{:.2f}".format(mean_redshift),
                 horizontalalignment='center',
                 verticalalignment='center',
                 fontsize=18, color=colorVal, 
                 weight="heavy",
                 transform=ax.transAxes)
 
-    if yPar == "Halpha_flux":
+    if yPar["colName"] == "Halpha_flux":
         xx = np.array(ax.get_xlim())
         yy = np.array(ax.get_ylim())
         ax.plot(xx,
@@ -129,41 +193,9 @@ def plot_single_mass_SFR(fileName, ax, xPar, yPar, xLog, yLog):
 
     hdulist.close()
 
-def plot_mass_SFR(draw='all', xlim=None, ylim=None, 
-        xPar="M_star", yPar="SFR", 
-        xLog=True, yLog=True,
-        xlabel=None, ylabel=None):
+    fig.suptitle(str(draw).replace("_", " "), fontsize=20)
 
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-
-    if xlabel is not None:
-        ax.set_xlabel(xlabel)
-    elif xPar == "M_star":
-        ax.set_xlabel('$\log(\\textnormal{M} / \\textnormal{M}_\odot)$')
-    else:
-        ax.set_xlabel(xPar.replace("_", " "))
-
-    if ylabel is not None:
-        ax.set_ylabel(ylabel)
-    elif yPar == "SFR":
-        ax.set_ylabel('$\log(\psi/\\textnormal{M}_\odot \, \\textnormal{yr}^{-1})$')
-    else:
-        ax.set_ylabel(yPar.replace("_", " "))
-
-    if xlim is not None:
-        ax.set_xlim(xlim)
-
-    if ylim is not None:
-        ax.set_ylim(ylim)
-
-    file = os.path.join(folder, "Summary_MC_"+str(draw)+".fits")
-
-    plot_single_mass_SFR(file, ax, xPar=xPar, yPar=yPar, xLog=xLog, yLog=yLog)
-
-    fig.suptitle('MC-'+str(draw), fontsize=20)
-
-    fileName = xPar+"_"+yPar+"_MC_"+str(draw)+".pdf"
+    fileName = xPar["colName"]+"_"+yPar["colName"]+"_"+str(draw)+".pdf"
     fileName = os.path.join(folder, fileName)
 
     fig.savefig(fileName, dpi=None, facecolor='w', edgecolor='w',
@@ -193,11 +225,11 @@ def plot_hist(draw=None, xlim=None, nbins=20,
 
     ax.set_ylabel("N objects")
 
-    fileName = os.path.join(folder, "Summary_MC_"+str(draw)+".fits")
+    fileName = os.path.join(folder, "Summary_"+str(draw)+".fits")
 
     hdulist = fits.open(fileName)
 
-    IDs = hdulist[1].data['ID']
+    IDs = hdulist['META DATA'].data['ID']
     data = hdulist[1].data[xPar]
 
     if xLog:
@@ -231,9 +263,9 @@ def plot_hist(draw=None, xlim=None, nbins=20,
 
     hdulist.close()
 
-    fig.suptitle('MC-'+str(draw), fontsize=20)
+    fig.suptitle(str(draw).replace("_", " "), fontsize=20)
 
-    fileName = xPar+"_histogram_MC_"+str(draw)+".pdf"
+    fileName = xPar+"_histogram_"+str(draw)+".pdf"
     fileName = os.path.join(folder, fileName)
 
     fig.savefig(fileName, dpi=None, facecolor='w', edgecolor='w',
@@ -246,11 +278,45 @@ def plot_hist(draw=None, xlim=None, nbins=20,
 
 if __name__ == "__main__":
 
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        '-r', '--results-dir',
+        help="Directory containing BEAGLE results",
+        action="store", 
+        type=str, 
+        dest="results_dir", 
+        required=True
+    )
+
+    parser.add_argument(
+        '--suffix',
+        help="Suffix",
+        action="store", 
+        type=str, 
+        dest="suffix", 
+        default=""
+    )
+
+    args = parser.parse_args()
+
+    folder = args.results_dir
+
     # ***************************************************
     # Plotting the mass-SFR relation
 
+    #plot_mass_SFR(draw="MAP", yPar="SFR_100", xlim=[6.5, 11], ylim=[-5, 4])
+
     for draw in range(10):
-        plot_mass_SFR(draw=draw, xlim=[6.5, 11], ylim=[-5, 4])
+        draw = "MC_"+str(draw)+args.suffix
+
+        xPar = {"colName":"M_tot","extName":"GALAXY PROPERTIES"}
+        yPar = {"colName":"SFR","extName":"STAR FORMATION"}
+        plot_X_vs_Y(draw=draw, xPar=xPar, yPar=yPar, xlim=[7.5, 12], ylim=[-2, 4])
+
+        #plot_mass_SFR(draw=draw, 
+        #        xPar="M_tot", yPar="SFR_100", 
+        #        xlim=[6.5, 11], ylim=[-3,3])
 
         #plot_mass_SFR(draw=draw, 
         #        xPar="f160w", yPar="Halpha_flux", 
@@ -273,7 +339,7 @@ if __name__ == "__main__":
         #        xlim=[24, 31.5], ylim=[-20,-16],
         #        xlabel="$m_\\textnormal{AB} \; 1500 \; \\textnormal{\AA}$", 
         #        ylabel="$\log(\\textnormal{H}\\alpha / \\textnormal{erg}\;\\textnormal{cm}^2 \; \\textnormal{s}^{-1})$",
-         #       xLog=False)
+        #       xLog=False)
 
 
 
