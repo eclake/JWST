@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import os
 import glob
 import numpy as np
@@ -129,7 +131,7 @@ def plot_X_vs_Y(draw, xPar, yPar,
                 transform=ax.transAxes)
 
 
-    if xPar["colName"] == "M_tot" and "SFR" in yPar["colName"]:
+    if "M_" in xPar["colName"] and "SFR" in yPar["colName"]:
         lgS = mass_SFR_relation(mean_redshift, MM)
 
         X, Y = np.mgrid[6.:11.:50j, -4.:4.:50j]
@@ -310,9 +312,9 @@ if __name__ == "__main__":
     for draw in range(10):
         draw = "MC_"+str(draw)+args.suffix
 
-        xPar = {"colName":"M_tot","extName":"GALAXY PROPERTIES"}
+        xPar = {"colName":"M_star","extName":"GALAXY PROPERTIES"}
         yPar = {"colName":"SFR","extName":"STAR FORMATION"}
-        plot_X_vs_Y(draw=draw, xPar=xPar, yPar=yPar, xlim=[7.5, 12], ylim=[-2, 4])
+        plot_X_vs_Y(draw=draw, xPar=xPar, yPar=yPar, xlim=[5.5, 12], ylim=[-3, 3])
 
         #plot_mass_SFR(draw=draw, 
         #        xPar="M_tot", yPar="SFR_100", 
