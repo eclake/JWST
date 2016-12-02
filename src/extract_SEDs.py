@@ -484,11 +484,11 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-        '-np',
+        '-nproc',
         help="Number of processors to use",
         action="store", 
         type=int, 
-        dest="np",
+        dest="nproc",
         default=-1
     )
 
@@ -583,7 +583,7 @@ if __name__ == '__main__':
     # file) do we print to the output Summary catalogue?
     extensions = ('GALAXY PROPERTIES', 'STAR FORMATION', 'POSTERIOR PDF')
 
-    if args.np <= 0:
+    if args.nproc <= 0:
         results = list()
         for (ID, file) in zip(IDs[0:args.n_objects], file_list[0:args.n_objects]):
             res = draw_rows_from_posterior(ID, file, 
@@ -599,7 +599,7 @@ if __name__ == '__main__':
     else:
 
         # Set number of parellel processes to use
-        pool = ProcessingPool(nodes=args.np)
+        pool = ProcessingPool(nodes=args.nproc)
 
         # Launch the actual calculation on multiple processesors
         results = pool.map(draw_rows_from_posterior, IDs, file_list, 
