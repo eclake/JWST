@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 
 ##### PS ########################################################
 # Signal to noise of ~10 expected for 10 exposures and an input
@@ -6,6 +7,8 @@
 # sensitivity computation (2,4)
 
 # Creation of the input spectrum (command-line sequence)
+import matplotlib
+matplotlib.use('GTKAgg')
 import os
 import sys
 sys.path.append(os.path.join(os.environ['PYP_BEAGLE'], "PyP-BEAGLE"))
@@ -35,70 +38,76 @@ from collections import OrderedDict
 import WeightedKDE
 from itertools import repeat
 
-from TwoDimPlot import CredibleIntervalContour
+from credible_intervals import CredibleInterval
 
 from beagle_filters import PhotometricFilters
 from beagle_photometry import ObservedCatalogue
 from beagle_utils import extract_row, set_plot_ticks
 
 c_light = 2.99792e+18 # Ang/s
-passive_fraction = 0.10
-sSFR_threshold = -9.0
-M_tot_threshold = 7.3
-seed = 12345
-
-Jy = np.float32(1.E-23)
-microJy = np.float32(1.E-23 * 1.E-06)
 nanoJy = np.float32(1.E-23 * 1.E-09)
 
-write_Summary = True
 show_plot = False
-write_to_disk = True
-compute_lines = False
 
-# ########################################################################################
-# ########################################################################################
-def write_SED(hdulist, indx, fileName, show_plot=False): 
+# taken from https://github.com/eclake/WG3_NIRSpec/blob/a3ade5286aea8d73bc07a6dbbfd24969a4f6eab2/SF%20Q%20separation.ipynb
+# Kevin Hainline employed the Whitaker+ 11 colour-cut criteria
+def UVJ_separation(redshift, UV, VJ): # returns 1 for quiescent, 0 for star-forming
+    if redshift > 4:
+        return -1
+    if redshift < 0.5:
+        if (UV > 0.88*VJ+0.69 and UV > 1.3 and VJ < 1.6):
+            #print 'yes'
+            return 1
+        else:
+            return 0
+    if redshift >= 0.5 and redshift < 1.5:
+        if (UV > 0.88*VJ+0.59 and UV > 1.3 and VJ < 1.6):
+            #print 'yes'
+            return 1
+        else:
+            return 0
+    if redshift >= 1.5 and redshift < 2.0:
+        if (UV > 0.88*VJ+0.59 and UV > 1.3 and VJ < 1.5):
+            #print 'yes'
+            return 1
+        else:
+            return 0
+    if redshift >= 2 and redshift < 4:
+        if (UV > 0.88*VJ+0.59 and UV > 1.2 and VJ < 1.4):
+            #print 'yes'
+            return 1
+        else:
+            return 0
 
-    # Now write in a separate FITS file the pararmeters corresponding to the MAP row
-    new_hdulist = fits.HDUList(fits.PrimaryHDU())
-
-    for hdu in hdulist:
-         
-        if hdu.data is not None:
-
-            if hdu.is_image:
-                new_hdu = fits.PrimaryHDU()
-                new_hdu.name = hdu.name
-                new_hdu.data = hdu.data[indx,:]
-            else:
-                new_hdu = fits.BinTableHDU.from_columns(hdu.columns, nrows=1)
-                new_hdu.name = hdu.name
-                if 'SED WL' in hdu.name:
-                    new_hdu.data = hdu.data
-                else:
-                    new_hdu.data[0] = hdu.data[indx]
-
-            new_hdulist.append(new_hdu)
-
-    new_hdulist.writeto(fileName, clobber=True)
-
-    new_hdulist.close()
 
 
-# ########################################################################################
-# ########################################################################################
+# ****************************************************************************************
+def draw_rows_from_interval(data, probability, n_draws=1, level=0.68):
 
-def mass_sfr(logM, SFR, z, distribution='t-Student'):
+    CredInterv = CredibleInterval(data=data, probability=probability)
+    indices = np.arange(len(probability))
+
+    if data.ndim == 1:
+        region = CredInterv.Get1DCredibleRegion(levels=(level,))
+        ok = np.where((data >= region[0]) & (data <= region[1]))[0] 
+    elif data.ndim == 2:
+        prob_level = CredInterv.GetProbabilityFor2DCredibleRegion(levels=(level,))
+        kde_pdf_grid =  CredInterv.kde_pdf(data)
+        ok = np.where((kde_pdf_grid >= prob_level))[0]
+
+    return np.random.choice(indices[ok], size=n_draws)
+
+# ****************************************************************************************
+def mass_sfr(mass, SFR, z, distribution='t-Student'):
     #Speagle+ 14 - log(M*) = (0.84-0.026*t)logM - (6.51-0.11*t)
     #cosmology used in paper to calculate ages (t) is (h,omega_m,omega_lambda) = (0.7,0.3,0.7)
     #Shivaei+ 15 measure scatter in log(SFR(Halpha))-log(M*) to be 0.3 dex (corrected for uncertainties)
     #We employ cauchy scatter - although I think it should only be scatter in one direction...
     cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
     t = cosmo.age(z).value
-    mean = (0.84-0.026*t)*logM - (6.51-0.11*t)
+    mean = (0.84-0.026*t)*mass - (6.51-0.11*t)
 
-    pdf = np.zeros(len(logM))
+    pdf = np.zeros(len(mass))
 
     for i, value in enumerate(SFR):
 
@@ -113,12 +122,13 @@ def mass_sfr(logM, SFR, z, distribution='t-Student'):
 
     return pdf
 
-def mass_sfr_test(M_tot, SFR, redshift, distribution='t-Student'):
+# ****************************************************************************************
+def mass_sfr_test(mass, SFR, redshift, distribution='t-Student'):
     #Speagle+ 14 - log(M*) = (0.84-0.026*t)logM - (6.51-0.11*t)
     #cosmology used in paper to calculate ages (t) is (h,omega_m,omega_lambda) = (0.7,0.3,0.7)
     #Shivaei+ 15 measure scatter in log(SFR(Halpha))-log(M*) to be 0.3 dex (corrected for uncertainties)
     #We employ cauchy scatter - although I think it should only be scatter in one direction...
-    logM = np.log10(M_tot)
+    logM = np.log10(mass)
     logSFR = np.log10(SFR)
 
     cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
@@ -143,308 +153,6 @@ def mass_sfr_test(M_tot, SFR, redshift, distribution='t-Student'):
 # ########################################################################################
 # ########################################################################################
 
-def print_ID(IDs, fileNames):
-
-    print "\nID: ", ID
-
-
-def extract_SED_from_FITS(ID, fileName, count):
-
-    commonPrefix = ID + suffix
-
-    recompute = True
-
-    print "\n fileName: ", fileName
-
-    # The input BEAGLE FITS file contains several (thousands) of SED in the
-    # "FULL SED" extension, we will just select the one corresponding to the
-    # Maximum-a-Posteriori to create the simulated NIRSpec observation
-
-    # *********************************************
-    # Create the "MAP" FITS file
-    # *********************************************
-
-    #for i in range(n_MonteCarlo):
-
-        # This FITS file will only contain the row corresponding to the MAP value of the posterior PDF
-     #   objPrefix = commonPrefix + '_MC_' + str(i)
-      #  newfile_name = os.path.join(output_folder, objPrefix + '.fits.gz')
-       # print "newfile_name: ", newfile_name
-
-        #if not os.path.isfile(newfile_name):
-         #   recompute = True
-          #  break
-
-    if recompute:
-
-        # Open the original BEAGLE FITS file
-        hdulist = fits.open(os.path.join(folder, fileName))
-
-        # Get the posterior probability
-        post = hdulist['posterior pdf'].data['probability']
-
-        # Now select in sSFR, so as to have a certain fraction of passive and star forming galaxies
-        sSFR = hdulist['star formation'].data['sSFR']
-        SFR = hdulist['star formation'].data['SFR']
-        SFR_100 = hdulist['star formation'].data['SFR_100']
-        M_star = hdulist['galaxy properties'].data['M_star']
-        M_tot = hdulist['galaxy properties'].data['M_tot']
-        template_redshifts = hdulist['posterior pdf'].data['redshift']
-
-        if compute_lines:
-            wl = np.ravel(hdulist['FULL SED WL'].data[0][:])
-
-        dropout_redshift = np.float32(obs_catalogue['dropout_redshift'][obs_catalogue['ID']==ID])
-
-        #pdf = mass_sfr(np.log10(M_tot), np.log10(SFR), template_redshifts, distribution='gaussian')
-        pdf = mass_sfr(np.log10(M_tot), np.log10(SFR), template_redshifts, distribution='gaussian')
-
-        data = np.zeros((2,len(M_tot)))
-        data[0,:] = M_tot
-        data[1,:] = SFR
-        #kde_pdf = WeightedKDE.gaussian_kde(, weights=pdf)
-
-        #reweighted_pdf = post*pdf
-        reweighted_pdf = pdf
-
-        # Redshifts corresponding to the different Beagle solutions
-        #template_redshifts = hdulist['posterior pdf'].data['redshift']
-
-        # Pick only the solutions consistent with Bouwens selection, i.e. +/- 0.5 from the redshift in the catalogue
-
-        z_low = dropout_redshift - 0.5
-        z_up = dropout_redshift + 0.5
-        ok = np.where((template_redshifts >= z_low) & (template_redshifts <= z_up) & (np.log10(M_tot) >= M_tot_threshold))[0]
-
-        # Extend the search at +/- 1 from the redshift in the catalogue
-        while (len(ok) < 2*n_MonteCarlo):
-            z_low -= redshift_step
-            z_up += redshift_step
-            ok = np.where((template_redshifts >= z_low) & (template_redshifts <= z_up) & (np.log10(M_tot) >= M_tot_threshold))[0]
-
-        indices = np.arange(len(post))
-
-        wrand = WalkerRandomSampling(reweighted_pdf[ok], keys=indices[ok])
-        rows = wrand.random(n_MonteCarlo)
-
-        selIndices = rows
-
-        n = len(selIndices)
-        summary = OrderedDict()
-        summary['ID'] = np.empty(n, dtype='S20')
-        summary['row'] = np.zeros(n, dtype=np.int)
-        summary['z'] = np.zeros(n, dtype=np.float32)
-        summary['M_star'] = np.zeros(n, dtype=np.float32)
-        summary['M_tot'] = np.zeros(n, dtype=np.float32)
-        summary['SFR'] = np.zeros(n, dtype=np.float32)
-        summary['sSFR'] = np.zeros(n, dtype=np.float32)
-        summary['SFR_100'] = np.zeros(n, dtype=np.float32)
-        summary['posterior_PDF'] = np.zeros(n, dtype=np.float32)
-        summary['reweighted_PDF'] = np.zeros(n, dtype=np.float32)
-        summary['UV_1500_FLAMBDA'] = np.zeros(n, dtype=np.float32)
-
-        # Compute Ha and Hb integrated fluxes and EW
-        for key, value in data_lines.iteritems():
-            summary[key+"_flux"] = np.zeros(n, dtype=np.float32)
-            summary[key+"_EW"] = np.zeros(n, dtype=np.float32)
-
-        for i, indx in enumerate(selIndices):
-
-            if write_Summary:
-                summary['ID'][i] = ID
-                summary['row'][i] = indx
-                summary['z'][i] = template_redshifts[indx]
-                summary['M_star'][i] = M_star[indx]
-                summary['M_tot'][i] = M_tot[indx]
-                summary['SFR'][i] = SFR[indx]
-                summary['sSFR'][i] = sSFR[indx]
-                summary['SFR_100'][i] = SFR_100[indx]
-                summary['posterior_PDF'][i] = post[indx]
-                summary['reweighted_PDF'][i] = reweighted_pdf[indx]
-
-                if compute_lines:
-
-                    SED = hdulist['FULL SED'].data[indx,:]
-
-                    i0 = np.searchsorted(wl, 1450)
-                    i1 = np.searchsorted(wl, 1550)
-                    UV_1500 = np.trapz(SED[i0:i1+1], x=wl[i0:i1+1]) / (wl[i1]-wl[i0])
-                    summary['UV_1500_FLAMBDA'][i] = UV_1500
-
-                    for key, value in data_lines.iteritems():
-
-                        # Compute the flux integrated around the line center, for all selected rows
-                        i0 = np.searchsorted(wl, value["center"]-width)
-                        i1 = np.searchsorted(wl, value["center"]+width)
-
-                        flux = np.trapz(SED[i0:i1+1], x=wl[i0:i1+1])
-                        summary[key+"_flux"][i] = flux
-
-                        # To compute the EW, you firstly computed the integrated flux in a window on the left of the EL
-                        il0 = np.searchsorted(wl, value["left_cont"][0])
-                        il1 = np.searchsorted(wl, value["left_cont"][1])
-                        if il0 == il1:
-                            il0 -= 1
-                        flux_left = np.trapz(SED[il0:il1+1], x=wl[il0:il1+1]) / (wl[il1]-wl[il0])
-
-                        # Repeat the same on the right of the line
-                        ir0 = np.searchsorted(wl, value["right_cont"][0])
-                        ir1 = np.searchsorted(wl, value["right_cont"][1])
-                        if ir0 == ir1:
-                            ir1 += 1
-                        flux_right = np.trapz(SED[ir0:ir1+1], x=wl[ir0:ir1+1]) / (wl[ir1]-wl[ir0])
-
-                        flux /= 0.5*(flux_left+flux_right)
-                        flux -= 1.
-                        flux = -flux
-
-                        summary[key+"_EW"][i] = flux
-
-            if write_to_disk:
-                objPrefix = commonPrefix + '_MC_' + str(i)
-                newfile_name = os.path.join(output_folder, objPrefix + '.fits.gz')
-                print "newfile_name: ", newfile_name
-                write_SED(hdulist, indx, newfile_name)
-
-
-        hdulist.close()
-
-        if write_Summary:
-
-            return summary
-                   
-def extract_MAP_from_FITS(ID, fileName):
-
-    commonPrefix = ID + suffix
-
-    recompute = True
-
-    print "\n fileName: ", fileName
-
-    # The input BEAGLE FITS file contains several (thousands) of SED in the
-    # "FULL SED" extension, we will just select the one corresponding to the
-    # Maximum-a-Posteriori to create the simulated NIRSpec observation
-
-    # *********************************************
-    # Create the "MAP" FITS file
-    # *********************************************
-
-    #for i in range(n_MonteCarlo):
-
-        # This FITS file will only contain the row corresponding to the MAP value of the posterior PDF
-     #   objPrefix = commonPrefix + '_MC_' + str(i)
-      #  newfile_name = os.path.join(output_folder, objPrefix + '.fits.gz')
-       # print "newfile_name: ", newfile_name
-
-        #if not os.path.isfile(newfile_name):
-         #   recompute = True
-          #  break
-
-    if recompute:
-
-        # Open the original BEAGLE FITS file
-        hdulist = fits.open(os.path.join(folder, fileName))
-
-        # Get the posterior probability
-        post = hdulist['posterior pdf'].data['probability']
-
-        # Now select in sSFR, so as to have a certain fraction of passive and star forming galaxies
-        sSFR = hdulist['star formation'].data['sSFR']
-        SFR = hdulist['star formation'].data['SFR']
-        SFR_100 = hdulist['star formation'].data['SFR_100']
-        M_star = hdulist['galaxy properties'].data['M_star']
-        M_tot = hdulist['galaxy properties'].data['M_tot']
-        template_redshifts = hdulist['posterior pdf'].data['redshift']
-
-        wl = np.ravel(hdulist['FULL SED WL'].data[0][:])
-
-        # Redshifts corresponding to the different Beagle solutions
-        #template_redshifts = hdulist['posterior pdf'].data['redshift']
-
-        # Pick only the solutions consistent with Bouwens selection, i.e. +/- 0.5 from the redshift in the catalogue
-        dropout_redshift = np.float32(obs_catalogue['dropout_redshift'][obs_catalogue['ID']==ID])
-
-        z_low = dropout_redshift - 0.5
-        z_up = dropout_redshift + 0.5
-        ok = np.where((template_redshifts >= z_low) & (template_redshifts <= z_up))[0]
-
-        # Extend the search at +/- 1 from the redshift in the catalogue
-        while (len(ok) < 1):
-            z_low -= redshift_step
-            z_up += redshift_step
-            ok = np.where((template_redshifts >= z_low) & (template_redshifts <= z_up))[0]
-
-        indices = np.arange(len(post))
-        indx = np.argmax(post[ok])
-        MAP_indx = indices[ok[indx]]
-
-        summary = OrderedDict()
-
-        # Compute Ha and Hb integrated fluxes and EW
-        for key, value in data_lines.iteritems():
-            summary[key+"_flux"] = np.zeros(n, dtype=np.float32)
-            summary[key+"_EW"] = np.zeros(n, dtype=np.float32)
-
-        if write_Summary:
-            summary['ID'] = ID
-            summary['row'] = MAP_indx
-            summary['z'] = template_redshifts[MAP_indx]
-            summary['M_star'] = M_star[MAP_indx]
-            summary['M_tot'] = M_tot[MAP_indx]
-            summary['SFR'] = SFR[MAP_indx]
-            summary['sSFR'] = sSFR[MAP_indx]
-            summary['SFR_100'] = SFR_100[MAP_indx]
-            summary['posterior_PDF'] = post[MAP_indx]
-
-            SED = hdulist['FULL SED'].data[MAP_indx,:]
-
-            i0 = np.searchsorted(wl, 1450)
-            i1 = np.searchsorted(wl, 1550)
-            UV_1500 = np.trapz(SED[i0:i1+1], x=wl[i0:i1+1]) / (wl[i1]-wl[i0])
-            summary['UV_1500_FLAMBDA'] = UV_1500
-
-            for key, value in data_lines.iteritems():
-
-                # Compute the flux integrated around the line center, for all selected rows
-                i0 = np.searchsorted(wl, value["center"]-width)
-                i1 = np.searchsorted(wl, value["center"]+width)
-
-                flux = np.trapz(SED[i0:i1+1], x=wl[i0:i1+1])
-                summary[key+"_flux"] = flux
-
-                # To compute the EW, you firstly computed the integrated flux in a window on the left of the EL
-                il0 = np.searchsorted(wl, value["left_cont"][0])
-                il1 = np.searchsorted(wl, value["left_cont"][1])
-                if il0 == il1:
-                    il0 -= 1
-                flux_left = np.trapz(SED[il0:il1+1], x=wl[il0:il1+1]) / (wl[il1]-wl[il0])
-
-                # Repeat the same on the right of the line
-                ir0 = np.searchsorted(wl, value["right_cont"][0])
-                ir1 = np.searchsorted(wl, value["right_cont"][1])
-                if ir0 == ir1:
-                    ir1 += 1
-                flux_right = np.trapz(SED[ir0:ir1+1], x=wl[ir0:ir1+1]) / (wl[ir1]-wl[ir0])
-
-                flux /= 0.5*(flux_left+flux_right)
-                flux -= 1.
-                flux = -flux
-
-                summary[key+"_EW"] = flux
-
-            if write_to_disk:
-                objPrefix = commonPrefix + '_MAP' 
-                newfile_name = os.path.join(output_folder, objPrefix + '.fits.gz')
-                print "newfile_name: ", newfile_name
-                write_SED(hdulist, MAP_indx, newfile_name)
-
-
-        hdulist.close()
-
-        if write_Summary:
-
-            return summary
-                   
 
 def plot_SEDs(ID, hdulist, rows_indices, x_log=False, print_title=True):
         
@@ -569,10 +277,11 @@ def draw_rows_from_posterior(ID, fileName,
         params_ranges=None,
         weight_func=None, 
         weight_func_args=None,
+        UVJ_data=None,
         extensions=None,
         make_plot=False):
 
-    print "Extracting rows from object ID: ", ID
+    print "Extracting rows from object ID: ", ID, "(filename: ", fileName, ")"
 
     # Open the original BEAGLE FITS file
     hdulist = fits.open(fileName)
@@ -580,75 +289,133 @@ def draw_rows_from_posterior(ID, fileName,
     # Get the posterior probability
     post = hdulist['posterior pdf'].data['probability']
 
+    # Photometric redshifts computed by Beagle
+    redshifts = hdulist['galaxy properties'].data['redshift']
+
     weights = np.full(1, len(post), dtype=np.float32)
 
-    # Can pass a "weight_func" that will take as input some parameters of the Beagle output and compute a weight, that will be used to multiply the posterior PDF
-    if weight_func is not None:
-        func_args = OrderedDict()
-        for key, value in weight_func_args.iteritems():
-            # Load the data from the Beagle FITS file into a dictionary
-            if "colName" in value:
-                data = hdulist[value["extName"]].data[value["colName"]]
-                func_args[key] = data
-            # Assume that the other entries of the dictionary correspond to kwargs of the weight_func
-            else:
-                func_args[key] = value
-    
-        # Compute the actual weights
-        weights = weight_func(**func_args)
+    # Compute the posterior median for the photometric redshift
+    CredInterv_redshfit = CredibleInterval(data=redshifts, probability=post)
+    median_redshift = CredInterv_redshfit.GetMedian()
 
-    reweighted_pdf = post*weights
-    #reweighted_pdf = weights
-    #reweighted_pdf = post
+    # Check of a UVJ dictionary was passed to the function, in which case you
+    # will split among quiescent / SF galaxies based on the UVJ diagram
+    galaxy_types = np.zeros(n_samples)
+    if UVJ_data is not None:
+        UVJ_bands = OrderedDict()
+        for key, value in UVJ_data.iteritems():
+            UVJ_bands[key] = hdulist[value["extName"]].data[value["colName"]]
+
+        U_V_color = UVJ_bands['U']-UVJ_bands['V']
+        V_J_color = UVJ_bands['V']-UVJ_bands['J']
+
+        data = np.zeros((2,len(post)))
+        data[0,:] = U_V_color
+        data[1,:] = V_J_color
+
+        rows = draw_rows_from_interval(data=data, probability=post, n_draws=n_samples, level=0.68)
+
+        if show_plot:
+            fig = plt.figure()
+            ax = fig.add_subplot(1, 1, 1)
+
+            plt.scatter(U_V_color,
+                    V_J_color,
+                    color = 'red',
+                    marker = "o",
+                    s=24
+                    )
+
+            plt.scatter(U_V_color[rows],
+                    V_J_color[rows],
+                    color = 'blue',
+                    marker = "x",
+                    s=24
+                    )
+
+            plt.show()
+
+        for i, row in enumerate(rows):
+            if UVJ_separation(redshifts[row], U_V_color[row], V_J_color[row]) == 1:
+                galaxy_types[i] = 1
+                
+
+    quiescent_indices = np.where(galaxy_types==1)[0]
+    n_quiescent = len(quiescent_indices)
+
+    star_forming_indices = np.where(galaxy_types!=1)[0]
+    n_star_forming = len(star_forming_indices)
     
-    # Besides the weight function, the user can select some allowed ranges for some parameters
-    mask = np.ones(len(post), dtype=bool)
-    n = -1
-    if params_ranges is not None:
-        i=0
-        while n < 2*n_samples:
-            mask = np.ones(len(post), dtype=np.bool)
-            for key, value in params_ranges.iteritems():
-                data = hdulist[value["extName"]].data[value["colName"]]
-                # The "step" is used to widen the range at each iteration, in
-                # order to have enough valid elements to then randomly draw
-                # n_samples from them
-                if "step" in value:
-                    step = value["step"]
+    rows_indices = np.zeros(n_samples, dtype=int)
+
+    if n_quiescent > 0:
+        rows_indices[quiescent_indices] = rows[quiescent_indices]
+
+    if n_star_forming > 0:
+
+        # Can pass a "weight_func" that will take as input some parameters of the
+        # Beagle output and compute a weight, that will be used to multiply the
+        # posterior PDF
+        if weight_func is not None:
+            func_args = OrderedDict()
+            for key, value in weight_func_args.iteritems():
+                # Load the data from the Beagle FITS file into a dictionary
+                if "colName" in value:
+                    data = hdulist[value["extName"]].data[value["colName"]]
+                    func_args[key] = data
+                # Assume that the other entries of the dictionary correspond to kwargs of the weight_func
                 else:
-                    step = 0
-                if "min" in value:
-                    m = value["min"]-i*step
-                    indx = np.where(data < m)[0]
-                    if len(indx) > 0:
-                        mask[indx] = False
-                if "max" in value:
-                    m = value["max"]+i*step
-                    indx = np.where(data > m)[0]
-                    if len(indx) > 0:
-                        mask[indx] = False
+                    func_args[key] = value
+        
+            # Compute the actual weights
+            weights = weight_func(**func_args)
 
-            n = np.sum(mask)
-            i += 1
+        reweighted_pdf = post*weights
+        #reweighted_pdf = weights
+        #reweighted_pdf = post
+
+        # Besides the weight function, the user can select some allowed ranges for some parameters
+        mask = np.ones(len(post), dtype=bool)
+        n = -1
+        if params_ranges is not None:
+            i=0
+            while n < 2*n_samples:
+                mask = np.ones(len(post), dtype=np.bool)
+                for key, value in params_ranges.iteritems():
+                    data = hdulist[value["extName"]].data[value["colName"]]
+                    # The "step" is used to widen the range at each iteration, in
+                    # order to have enough valid elements to then randomly draw
+                    # n_samples from them
+                    if "step" in value:
+                        step = value["step"]
+                    else:
+                        step = 0
+                    if "min" in value:
+                        m = value["min"]-i*step
+                        indx = np.where(data < m)[0]
+                        if len(indx) > 0:
+                            mask[indx] = False
+                    if "max" in value:
+                        m = value["max"]+i*step
+                        indx = np.where(data > m)[0]
+                        if len(indx) > 0:
+                            mask[indx] = False
+
+                n = np.sum(mask)
+                i += 1
+
+        #
+        if UVJ_data is not None:
+            for i, (redshift, UV, VJ) in enumerate(zip(redshifts, U_V_color, V_J_color)):
+                if UVJ_separation(redshift, UV, VJ) == 1:
+                    mask[i] = False
+        
             
-    
-    #data = np.zeros((2,len(post)))
-    #data[0,:] = hdulist['galaxy properties'].data['M_tot']
-    #data[1,:] = hdulist['star formation'].data['SFR']
-    #credInterval = CredibleIntervalContour(data, post)
-    
-    #isoLevels = credInterval.GetProbabilityForCredibleRegion((0.68,0.95))
-    # All probabilities larger than than the isocontour probability are ok, hence we select those smaller, to set then mask=False for those indices
-    #indx = np.where(post < isoLevels[0])[0]
-    #mask[indx] = False
-    
-    indices = np.arange(len(post))
+        indices = np.arange(len(post))
 
-    # Randomly draw the indices of the rows, using as weights the reweighted posterior PDF 
-    wrand = WalkerRandomSampling(reweighted_pdf[mask], keys=indices[mask])
-    rows_indices = wrand.random(n_samples)
-
-    #print "---> ", post[rows_indices]
+        # Randomly draw the indices of the rows, using as weights the reweighted posterior PDF 
+        wrand = WalkerRandomSampling(reweighted_pdf[mask], keys=indices[mask])
+        rows_indices[star_forming_indices] = wrand.random(n_star_forming)
 
     if make_plot: 
         plot_SEDs(ID, hdulist, rows_indices)
@@ -792,42 +559,41 @@ if __name__ == '__main__':
     if args.n_objects < 0:
         args.n_objects = len(IDs)
 
+    # Arguments used by the "weight function", which is multiplied by the
+    # posterior pdf to then select solutions from all the possible ones which
+    # are output from Beagle
     weight_func_args = OrderedDict()
-    weight_func_args['M_tot'] = {"colName":"M_tot", "extName":"galaxy properties"}
+    weight_func_args['mass'] = {"colName":"M_star", "extName":"galaxy properties"}
     weight_func_args['SFR'] = {"colName":"SFR", "extName":"star formation"}
     weight_func_args['redshift'] = {"colName":"redshift", "extName":"galaxy properties"}
     weight_func_args['distribution'] = 'gaussian'
 
+    #
+    UVJ_data = OrderedDict()
+    UVJ_data['U'] = {"colName":"_Bessel_U_ABS", "extName":"absolute magnitudes"}
+    UVJ_data['V'] = {"colName":"_Bessel_V_ABS", "extName":"absolute magnitudes"}
+    UVJ_data['J'] = {"colName":"_TwoMass_J_ABS", "extName":"absolute magnitudes"}
+
+    # Restrict the allowed solutions to have some parameters within defined ranges
     params_ranges=None
     if args.params_ranges is not None:
         params_ranges = json.loads(args.params_ranges)
 
-    #print "params_ranges: ", params_ranges
-
-    #stop
-
-    #params_ranges = OrderedDict()
-
-    #params_ranges['redshift'] = {"colName":"redshift", "extName":"galaxy properties", "min":3.5, "max":4.5, "step":0.1}
-
-    #params_ranges['redshift'] = {"colName":"redshift", "extName":"galaxy properties", "min":5.0, "step":0.1}
-
-    #params_ranges['mass'] = {"colName":"M_tot", "extName":"galaxy properties", "min":10.**(7.3)}
-
-
-    #
+    # Which FITS extension (among those available from the Beagle output FITS
+    # file) do we print to the output Summary catalogue?
     extensions = ('GALAXY PROPERTIES', 'STAR FORMATION', 'POSTERIOR PDF')
 
     if args.np <= 0:
         results = list()
         for (ID, file) in zip(IDs[0:args.n_objects], file_list[0:args.n_objects]):
             res = draw_rows_from_posterior(ID, file, 
-                    args.n_samples,
-                    params_ranges,
-                    mass_sfr_test,
-                    weight_func_args,
-                    extensions,
-                    make_plot
+                    n_samples=args.n_samples,
+                    params_ranges=params_ranges,
+                    weight_func=mass_sfr_test,
+                    weight_func_args=weight_func_args,
+                    UVJ_data=UVJ_data,
+                    extensions=extensions,
+                    make_plot=make_plot
                     )
             results.append(res)
     else:
@@ -841,6 +607,7 @@ if __name__ == '__main__':
                 (params_ranges,)*len(IDs),
                 (mass_sfr_test,)*len(IDs),
                 (weight_func_args,)*len(IDs),
+                (UVJ_data,)*len(IDs),
                 (extensions,)*len(IDs)
                 )
 
@@ -886,114 +653,4 @@ if __name__ == '__main__':
     for i, (key, value) in enumerate(data.iteritems()):
         name = os.path.join(folder, 'Summary_MC_'+str(i)+args.suffix+'.fits')
         value.writeto(name, clobber=True)
-    stop
-
-# Name of the original XDF catalogue on which the BEAGLE fittting is based
-catalogue_name = os.path.expandvars("$BEAGLE_DATA/XDF/XDF_DROPOUTS_aper_corr.fits")
-obs_hdu = fits.open(catalogue_name)[1]
-obs_catalogue = obs_hdu.data
-
-fit_folder = "ineb_Jan16_logU_xid_delayed_SFR_max_age-Gaussian"
-fit_folder = "B_DROPOUTS/ineb_Jan16_logU_xid_delayed_SFR-Gaussian_max_age-Gaussian"
-
-# Folder containing the input BEAGLE FITS files that will be post-processed to
-# obtain simulated NIRSpec observations 
-folder = os.path.join("/local/jchevall/BEAGLE_results/XDF", fit_folder)
-#folder="/user_data/jchevall/BEAGLE/files/results/XDF/ineb_Jan16_logU_xid_constant_SFR"
-
-suffix = "_BEAGLE"
-
-# Files in this list will be processed into NIRSpec observations
-IDs = list()
-fileNames = list()
-fileName = os.path.join(folder, 'selected_objects.txt')
-if os.path.isfile(fileName):
-    with open(fileName) as f:
-        for line in f:
-            objFileName = line.strip()
-            fileNames.append(objFileName)
-            IDs.append(objFileName.split(suffix)[0])
-else:
-    fileNames, IDs = get_files_list(results_dir=folder)
-
-n = len(IDs)
-
-data_lines = OrderedDict()
-
-line = {"center":6563., "left_cont":[6535., 6540.], "right_cont":[6590., 6595.]}
-data_lines['Halpha'] = line
-
-line = {"center":4861., "left_cont":[4820., 4825.], "right_cont":[4890., 4895.]}
-data_lines['Hbeta'] = line
-
-width = 15.
-
-# Output folder, containing the simulated NIRSpec observations
-output_folder = os.path.join("/home/jchevall/JWST/Simulations/XDF", fit_folder, "mass_SFR_weighted_Gaussian_no_posterior")
-if not os.path.isdir(output_folder):
-    os.makedirs(output_folder)
-
-# Number of Monte Carlo draws
-n_MonteCarlo = 1
-redshift_step = 0.1
-ranSeed = 123456
-np.random.seed(ranSeed)
-
-
-if write_Summary:
-    summary_data = OrderedDict()
-    summary_data['ID'] = np.empty(n, dtype='S20')
-    summary_data['row'] = np.zeros(n, dtype=np.int)
-    summary_data['z'] = np.zeros(n, dtype=np.float32)
-    summary_data['M_star'] = np.zeros(n, dtype=np.float32)
-    summary_data['M_tot'] = np.zeros(n, dtype=np.float32)
-    summary_data['SFR'] = np.zeros(n, dtype=np.float32)
-    summary_data['sSFR'] = np.zeros(n, dtype=np.float32)
-    summary_data['SFR_100'] = np.zeros(n, dtype=np.float32)
-    summary_data['posterior_PDF'] = np.zeros(n, dtype=np.float32)
-    summary_data['reweighted_PDF'] = np.zeros(n, dtype=np.float32)
-    summary_data['UV_1500_FLAMBDA'] = np.zeros(n, dtype=np.float32)
-
-    # Compute Ha and Hb integrated fluxes and EW
-    for key, value in data_lines.iteritems():
-        summary_data[key+"_flux"] = np.zeros(n, dtype=np.float32)
-        summary_data[key+"_EW"] = np.zeros(n, dtype=np.float32)
-
-    global_summary = OrderedDict()
-    for i in range(n_MonteCarlo):
-        key = 'MC_' + str(i)
-        print "key: ", key
-        global_summary[key] = copy.deepcopy(summary_data)
-
-
-counters = range(len(IDs))    
-
-pool = ProcessingPool(nodes=23)
-#results = extract_MAP_from_FITS(IDs[0], fileNames[0])
-if 1 == 0:
-    results = pool.map(extract_MAP_from_FITS, IDs, fileNames)
-    if write_Summary:
-        for j, summary in enumerate(results):
-            for k, val in summary.iteritems():
-                global_summary[key][k][j] = val
-
-        fileName = 'Summary_MAP.fits'
-        fileName = os.path.join(output_folder, fileName)
-        tab = Table(global_summary[key])
-        tab.write(fileName, format='fits', overwrite=True)
-
-if 0 == 0:
-    results = pool.map(extract_SED_from_FITS, IDs, fileNames, counters)
-
-    if write_Summary:
-        for i in range(n_MonteCarlo):
-            key = 'MC_' + str(i)
-            for j, summary in enumerate(results):
-                for k, val in summary.iteritems():
-                    global_summary[key][k][j] = val[i]
-
-            fileName = 'Summary_' + key + '.fits'
-            fileName = os.path.join(output_folder, fileName)
-            tab = Table(global_summary[key])
-            tab.write(fileName, format='fits', overwrite=True)
 
