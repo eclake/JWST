@@ -9,6 +9,7 @@
 # Creation of the input spectrum (command-line sequence)
 from JWSTpylib import c_spectrum
 import os
+import random
 from astropy.io import fits
 import numpy as np
 import matplotlib.pyplot as plt
@@ -18,11 +19,6 @@ import re
 c_light = 2.99792e+18 # Ang/s
 show_plot = False
 
-# Name of the original XDF catalogue on which the BEAGLE fittting is based
-catalogue_name = os.path.expandvars("$BEAGLE_DATA/XDF/XDF_DROPOUTS_aper_corr.fits")
-obs_hdu = fits.open(catalogue_name)[1]
-obs_catalogue = obs_hdu.data
-
 # Name of the Python script that creates the simulated NIRSpec observations
 Pierre_procedure = "/Users/jchevall/JWST/code/JWSTpytools-0.0.3/sensitivity/p_spectrumMOS1x3.py"
 datapath = "/Users/jchevall/JWST/code/JWSTpytools-0.0.3/data"
@@ -30,13 +26,6 @@ pce = "PCE-NIRS30-IFU30-FPA106"
 
 # How many exposures?
 #nbexps = ("108", "36", "36", "36")
-
-# Folder containing the input BEAGLE FITS files that will be post-processed to
-# obtain simulated NIRSpec observations 
-folder = "/Users/jchevall/Coding/BEAGLE/files/results/XDF/ineb_Jan16"
-
-suffix = "_BEAGLE"
-
 
 def compute_ETC_simulation(input_file, FWA, GWA, nbexp, output_folder, output_prefix):
 
@@ -128,7 +117,7 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '-o', '--output-dir',
-        help="Directory that will contain the ETC-like simulations",
+        help="Directory that will contain the ETC-like simulations.",
         action="store", 
         type=str, 
         dest="output_dir", 
@@ -137,7 +126,7 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '-i', '--input-catalogue',
-        help="FITS file containing the input (noiseless) catalogue of galaxy SEDs",
+        help="FITS file containing the input catalogue of galaxy SEDs produeced by the Beagle tool.",
         action="store", 
         type=str, 
         dest="input_catalogue", 
@@ -179,24 +168,41 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-        '--show-plot', 
-        help="Show plots of input / output SED.",
-        action="store_true", 
-        dest="show_plot" 
+        '-N',
+        help="The first N objects will be processed.",
+        action="store", 
+        type=int
     )
 
     parser.add_argument(
+        '--seed', 
+        help="Seed of the random number generator.",
+        action="store", 
+        type=int,
+        dest="seed",
+        default=123456
+    )
+
+    parser.add_argument(
+        '--shuffle', 
+        help="Shuffle the rows of the input catalogue.",
+        action="store_true", 
+        dest="shuffle" 
+    )
+
+
+    parser.add_argument(
         '--no-recompute', 
-        help="Recompute existing data or not",
+        help="Recompute existing data or not.",
         action="store_true", 
         dest="no_recompute" 
     )
 
     parser.add_argument(
-        '-N',
-        help="The first N objects will be processed.",
-        action="store", 
-        type=int
+        '--show-plot', 
+        help="Show plots of input / output SED.",
+        action="store_true", 
+        dest="show_plot" 
     )
 
     # Get parsed arguments
@@ -205,6 +211,10 @@ if __name__ == '__main__':
     # 
     if not len(args.FWAs) == len(args.GWAs) == len(args.nbexps):
         raise ValueError("The length of the filters, gratings, and number of exposures must be the same!")
+
+    # Set seed for random number generator (used only when shuffling the input
+    # catalogue rows)
+    random.seed(args.seed)
 
     # Flag to recompute or not existing data
     recompute = not args.no_recompute
@@ -250,17 +260,21 @@ if __name__ == '__main__':
     # in the catalogue, but the user can choose to just run on the first N
     # objects (mainly for testing purposes!)
     n_objects = len(redshifts)
+    rows = range(n_objects)    
+    if args.shuffle:
+        random.shuffle(rows)
+
     if args.N:
-        n_objects = args.N
+        rows = rows[:args.N]
 
     # Cycle across all objects in the input FITS catalogue
-    for i in range(n_objects):
+    for row in rows:
 
         # Redshfit of the i-th object (i.e., i-th row in the input FITS catalogue)
-        redshift = redshifts[i]
+        redshift = redshifts[row]
 
         # Name of the FITS file containing the input SED for the ETC simulator
-        ETC_input_file = os.path.join(ETC_input_dir, str(i+1) + suffix + '_input_for_ETC.fits')
+        ETC_input_file = os.path.join(ETC_input_dir, str(row+1) + suffix + '_input_for_ETC.fits')
 
         # By default you always recompute the input file for the ETC, but in
         # some occasions ypu may just want to create the input file for some
@@ -268,7 +282,7 @@ if __name__ == '__main__':
         if not os.path.isfile(ETC_input_file) or recompute:
 
             # SED (units are those putput from Beagle, i.e. erg s^-1 cm^-2 A^-1)
-            sed = hdulist['full sed'].data[i,:]
+            sed = hdulist['full sed'].data[row,:]
 
             # Function that creates the FITS file that will later be used as
             # input for the ETC simulator. Note that this function simply
@@ -278,7 +292,7 @@ if __name__ == '__main__':
 
 
         # Prefix for the output file produced by the ETC simulator
-        ETC_output_prefix = str(i+1) + suffix
+        ETC_output_prefix = str(row+1) + suffix
 
         # Cycle across each combination of filter, grating, and number of exposures
         for FWA, GWA, nbexp in zip(args.FWAs, args.GWAs, args.nbexps):
