@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-python plot_mass_SFR_galaxies.py -r /Users/jchevall/JWST/Simulations/WG3_z_lt_4_mock_test_5_new
+./plot_mass_SFR_galaxies.py -r /home/jchevall/JWST/Simulations/XDF/B_DROPOUTS/ineb_Jan16_logU_xid_delayed_SFR-Gaussian_max_age-Gaussian --suffix _min_z_2.0
 
 #python plot_mass_SFR_galaxies.py -r /Users/jchevall/JWST/Simulations/UVUDF/Emma_IDs/ineb_Jan16_logU_xid_delayed_SFR-Gaussian_max_age-Gaussian_new --suffix _min_z_1.0
 
