@@ -20,8 +20,9 @@ c_light = 2.99792e+18 # Ang/s
 show_plot = False
 
 # Name of the Python script that creates the simulated NIRSpec observations
-Pierre_procedure = "/Users/jchevall/JWST/code/JWSTpytools-0.0.3/sensitivity/p_spectrumMOS1x3.py"
-datapath = "/Users/jchevall/JWST/code/JWSTpytools-0.0.3/data"
+jwstpytools = os.environ['JWSTPYTOOLS']
+jwstpytools_procedure = os.path.join(jwstpytools, "sensitivity/p_spectrumMOS1x3.py")
+jwstpytools_data = os.path.join(jwstpytools, "data")
 pce = "PCE-NIRS30-IFU30-FPA106"
 
 # How many exposures?
@@ -29,7 +30,7 @@ pce = "PCE-NIRS30-IFU30-FPA106"
 
 def compute_ETC_simulation(input_file, FWA, GWA, nbexp, output_folder, output_prefix):
 
-    sys_command = "python2.7 " + Pierre_procedure + " " + input_file + " " + datapath + " " + pce \
+    sys_command = "python2.7 " + jwstpytools_procedure + " " + input_file + " " + jwstpytools_data + " " + pce \
             + " " + FWA + " " + GWA + " PS " + nbexp + " " + output_folder + " " + output_prefix
 
     os.system(sys_command)
