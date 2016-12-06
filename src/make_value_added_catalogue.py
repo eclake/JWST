@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 from scipy import spatial
 import os
 import math
@@ -13,10 +15,18 @@ from collections import defaultdict
 import itertools
 import matplotlib.pyplot as plt
 
+import sys
+sys.path.append(os.path.join(os.environ['PYP_BEAGLE'], "PyP-BEAGLE"))
+from beagle_utils import BeagleDirectories, extract_IDs
+import beagle_multiprocess
+
+from pathos.multiprocessing import ProcessingPool 
+
 deltaEvidence_lim = 6.
 deltaZ_lim = 0.5
 __logBase10of2 = 3.010299956639811952137388947244930267681898814621085413104274611e-1
 
+results_dir = ""
 
 def RoundToSigFigs( x, sigfigs ):
     """
@@ -53,9 +63,9 @@ def find_nearest(array,value):
         dist = np.abs(value-array[idx])
         return idx, dist
 
-def get_mode_rows(ID, results_dir, param_names, param_indices, mode_index):
+def get_mode_rows(ID, param_names, param_indices, mode_index):
 
-    file_name = os.path.join(results_dir, ID + "_BEAGLE_MNpost_separate.dat")
+    file_name = os.path.join(ID + "_BEAGLE_MNpost_separate.dat")
 
     n_empty = 0
     prev_is_empty = False
@@ -120,7 +130,12 @@ def get_mode_rows(ID, results_dir, param_names, param_indices, mode_index):
 
     return rows
     
-def extract_data(ID, results_dir, n_par, redshift_index, redshift_type=None):
+def extract_data(ID, n_par, redshift_index, redshift_type=None):
+
+    file_name = os.path.join(results_dir, str(ID) + "_BEAGLE_MNstats.dat")
+
+    if not os.path.isfile(file_name):
+        return None
 
     # This number include the posterior mean, maximum likelihood and
     # maximum a posteriori for each parameter + the headers
@@ -131,7 +146,6 @@ def extract_data(ID, results_dir, n_par, redshift_index, redshift_type=None):
     first_line = 10
 
     # Now we read the evidence, post mean, maximum likelihood and map for each mode
-    file_name = os.path.join(results_dir, ID + "_BEAGLE_MNstats.dat")
     f = open(file_name , 'r')
     outData = OrderedDict()
     post_sig = list()
@@ -230,114 +244,183 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-        '-r', '--results-directory',
-        help="Name of the direvotry containing Beagle results",
+        '-r', '--results-dir',
+        help="Directory containing BEAGLE results",
         action="store", 
         type=str, 
-        dest="resultsDir", 
+        dest="results_dir", 
         required=True
+    )
+
+    parser.add_argument(
+        '-p', '--parameter-file',
+        help="Parametr file used in the BEAGLE run",
+        action="store", 
+        type=str, 
+        dest="param_file",
+        required=True
+    )
+
+    parser.add_argument(
+        '-nproc',
+        help="Number of processors to use",
+        action="store", 
+        type=int, 
+        dest="nproc",
+        default=-1
     )
 
     # Get parsed arguments
     args = parser.parse_args()
 
+    results_dir = args.results_dir
+
     # Read the input catalogue
-    inputData = Table.read(args.inputCat, format='ascii')
+    inputData = Table.read(args.inputCat)
+
+    # ID in the input catalogue
+    input_IDs = extract_IDs(inputData)
 
     # Read parameter file
     config = ConfigParser.SafeConfigParser()
 
     # Search for the parameter file in the results directory
-    for root, dirs, files in os.walk(args.resultsDir):
-        for file in files:
-            if file.endswith('.param'):
-                param_file = os.path.join(root, file)
-                break
+    if os.path.isabs(args.param_file):
+        param_file = args.param_file
+    else:
+        param_file = os.path.join(args.results_dir, 'BEAGLE-input-files', args.param_file)
 
     config.read(param_file)
 
     file_name = os.path.expandvars(config.get('main', 'PHOTOMETRIC CATALOGUE'))
-    BeagleData = fits.open(file_name)[1].data
+    BeaglePhotCat = fits.open(file_name)[1].data
 
-    inputCoord = SkyCoord(ra=inputData['RA']*u.degree, dec=inputData['DEC']*u.degree)  
-    BeagleCoord = SkyCoord(ra=BeagleData['RA']*u.degree, dec=BeagleData['DEC']*u.degree)  
+    # ID in the photometric catalogue fitted by Beagle
+    Beagle_IDs = extract_IDs(BeaglePhotCat)
+
+    inputCoord = SkyCoord(ra=np.array(inputData['RA'])*u.degree, dec=np.array(inputData['DEC'])*u.degree)  
+    BeagleCoord = SkyCoord(ra=np.array(BeaglePhotCat['RA'])*u.degree, dec=np.array(BeaglePhotCat['DEC'])*u.degree)  
     idx, d2d, d3d = inputCoord.match_to_catalog_sky(BeagleCoord)  
 
-    n = len(inputData.field(0))
+    n_input = len(inputData.field(0))
     # Columns to be added to the catalogues
+    param_names = ["redshift", "mass"]
     paramKeys = ["z_beagle", "z_beagle_err", "M", "M_err", "sSFR", "sSFR_err"]
+
     dictKeys = list()
-    dictKeys.append("UVUDF_ID")
-    dictKeys.append("distance")
-    for i in (1,2):
-        for key in paramKeys:
-            dictKeys.append(key+'_'+str(i))
+    dictTypes = list()
+    colFormat = list()
 
-    dictKeys.append("deltaEvidence")
-    dictKeys.append("KF_flag")
-    dictKeys.append("P1/P2")
+    dictKeys.append("ID_input") ; dictTypes.append(np.int) ; colFormat.append("4d")
+    dictKeys.append("ID_Beagle") ; dictTypes.append(np.int) ; colFormat.append("4d")
+    dictKeys.append("distance") ; dictTypes.append(np.float32) ; colFormat.append(".3f")
 
-    dictTypes = [
-            np.int, 
-            np.float32,
-            np.float32, np.float32, np.float32, np.float32, np.float32, np.float32,
-            np.float32, np.float32, np.float32, np.float32, np.float32, np.float32,
-            np.float32, np.int, np.float32
-            ]
+    for name in param_names:
+        for j in range(2):
+            suff = str(j+1)
+            key = name+"_beagle_"+suff
+            dictKeys.append(key) ; dictTypes.append(np.float32) ; colFormat.append(".3f")
+            key = name+"_beagle_err_"+suff
+            dictKeys.append(key) ; dictTypes.append(np.float32) ; colFormat.append(".3f")
 
-    colFormat = ["4d",
-            ".3f",
-            ".3f",".3f",".2f",".2f",".2f",".2f",
-            ".3f",".3f",".2f",".2f",".2f",".2f",
-            ".2f",
-            "1d",
-            ".3E"
-            ]
+    paramDict = OrderedDict()
+    # Determine number of free parameters by counting columns in Beagle output file
+    suffix = BeagleDirectories.suffix + '.fits.gz'
+    for file in sorted(os.listdir(args.results_dir)):
+        full_path = os.path.join(args.results_dir, file)
+        if file.endswith(suffix) and os.path.getsize(full_path) > 0:
+            with fits.open(full_path) as f:
+                n_par = len(f["POSTERIOR PDF"].data.dtype.names)-2
+                
+                for name in param_names:
+                    for i, col_name in enumerate(f["POSTERIOR PDF"].data.dtype.names):
+                        if name == col_name:
+                            paramDict[name] = (i+1)-2
+                            break
+
+
+            break
+
+    dictKeys.append("deltaEvidence") ; dictTypes.append(np.float32) ; colFormat.append(".2f")
+    dictKeys.append("KF_flag") ; dictTypes.append(np.int) ; colFormat.append("1d")
+    dictKeys.append("P1/P2") ; dictTypes.append(np.float32) ; colFormat.append(".3e")
 
     newCols = OrderedDict()
 
     for key, Type in zip(dictKeys, dictTypes):
-        newCols[key] = np.full(n, -99, Type)
+        newCols[key] = np.full(n_input, -99, Type)
     
-    zCol, mCol, sCol = 2, 1, 6
+    mask = np.zeros(n_input, dtype=bool)
+    ok = np.where(d2d.arcsecond <= 0.2)[0]
+    input_idx = range(n_input)
+    input_idx = np.array(input_idx)[ok]
 
-    for i, (indx, dist) in enumerate(zip(idx, d2d.arcsecond)):
-        #print '\n i: ', i
-        if dist > -2.:
-            ID = BeagleData['ID'][indx]
-            newCols["UVUDF_ID"][i] = int(ID)
-            newCols["distance"][i] = dist
-            #print "ID: ", ID
-            data = extract_data(str(ID), n_par=7)
+    match_ok = idx[ok]
+    n_ok = len(match_ok)
+    # Put oriignal (input catalgoue) IDs in the output catalogue
+    newCols["ID_input"] = np.array(input_IDs, dtype=int)
 
-            for j, (k, mod) in enumerate(data.iteritems()):
-                newCols["z_beagle_"+str(j+1)][i] = 1.
-                newCols["z_beagle_"+str(j+1)][i] = mod["posterior_mean"][zCol-1]
-                newCols["z_beagle_err_"+str(j+1)][i] = mod["posterior_sigma"][zCol-1]
+    # Put IDs and distances of matched objects
+    newCols["ID_Beagle"][ok] = np.array(Beagle_IDs[match_ok], dtype=int)
+    newCols["distance"][ok] = d2d.arcsecond[match_ok]
 
-                newCols["M_"+str(j+1)][i] = mod["posterior_mean"][mCol-1]
-                newCols["M_err_"+str(j+1)][i] = mod["posterior_sigma"][mCol-1]
+    # If the user does not specify the number of processors to be used, assume that it is a serial job
+    data = list()
+    if args.nproc <= 0:
 
-                newCols["sSFR_"+str(j+1)][i] = mod["posterior_mean"][sCol-1]
-                newCols["sSFR_err_"+str(j+1)][i] = mod["posterior_sigma"][sCol-1]
+        for indx in match_ok:
+            ID = Beagle_IDs[indx]
+            d = extract_data(ID, 
+                    n_par=n_par, 
+                    redshift_index=paramDict["redshift"]
+                    )
 
-                if j == 0:
-                    deltaEvidence = mod["evidence"]
-                else:
-                    deltaEvidence -= mod["evidence"]
+            data.append(d)
+    
+    # Otherwise you use pathos to run in parallel on multiple CPUs
+    else:
 
-            if j > 0:
-                newCols["deltaEvidence"][i] = deltaEvidence
-                newCols["P1/P2"][i] = np.exp(-deltaEvidence)
+        # Set number of parellel processes to use
+        pool = ProcessingPool(nodes=args.nproc)
 
-                if 2.*deltaEvidence < 2.:
-                    newCols["KF_flag"][i] = 0
-                elif 2.*deltaEvidence < 6.:
-                    newCols["KF_flag"][i] = 1
-                elif 2.*deltaEvidence < 10.:
-                    newCols["KF_flag"][i] = 2
-                else:
-                    newCols["KF_flag"][i] = 3
+        # Launch the actual calculation on multiple processesors
+        data = pool.map(extract_data, 
+            Beagle_IDs[match_ok],
+            (n_par,)*n_ok,
+            (paramDict["redshift"],)*n_ok
+            )
+
+    for i, indx in enumerate(input_idx):
+
+        d = data[i]
+
+        if d is None:
+            continue
+
+        for j, (key, value) in enumerate(d.iteritems()):
+
+            for name, row_index in paramDict.iteritems():
+                suff = str(j+1)
+                newCols[name+"_beagle_"+suff][indx] = value["posterior_mean"][row_index-1]
+                newCols[name+"_beagle_err_"+suff][indx] = value["posterior_sigma"][row_index-1]
+
+            if j == 0:
+                deltaEvidence = value["evidence"]
+            else:
+                deltaEvidence -= value["evidence"]
+
+        if j > 0:
+            newCols["deltaEvidence"][indx] = deltaEvidence
+            newCols["P1/P2"][indx] = np.exp(-deltaEvidence)
+
+            if 2.*deltaEvidence < 2.:
+                newCols["KF_flag"][indx] = 0
+            elif 2.*deltaEvidence < 6.:
+                newCols["KF_flag"][indx] = 1
+            elif 2.*deltaEvidence < 10.:
+                newCols["KF_flag"][indx] = 2
+            else:
+                newCols["KF_flag"][indx] = 3
     
     myCols = list()
     for i, (key, col) in enumerate(newCols.iteritems()):
@@ -349,7 +432,3 @@ if __name__ == '__main__':
     file_name = os.path.basename(args.inputCat).split('.')[0] + '_Beagle.txt'
     print "file_name: ", file_name
     newTable.write(file_name, format="ascii.commented_header")
-    
-    #print "idx: ", idx, d2d.arcsecond
-    #print "---> ", inputData.field(0)
-    #print "---> ", BeagleData.field(0)[idx]
