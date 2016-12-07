@@ -3,7 +3,7 @@
 from scipy import spatial
 import os
 import math
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, Angle
 from astropy import units as u
 from astropy.io import fits
 from astropy.table import Table, Column
@@ -244,6 +244,26 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
+        '--input-coord',
+        help="",
+        action="store", 
+        type=str, 
+        nargs=2,
+        dest="input_coord",
+        default=("deg", "deg")
+    )
+
+    parser.add_argument(
+        '--beagle-coord',
+        help="",
+        action="store", 
+        type=str, 
+        nargs=2,
+        dest="beagle_coord",
+        default=("deg", "deg")
+    )
+
+    parser.add_argument(
         '-r', '--results-dir',
         help="Directory containing BEAGLE results",
         action="store", 
@@ -298,9 +318,31 @@ if __name__ == '__main__':
     # ID in the photometric catalogue fitted by Beagle
     Beagle_IDs = extract_IDs(BeaglePhotCat)
 
-    inputCoord = SkyCoord(ra=np.array(inputData['RA'])*u.degree, dec=np.array(inputData['DEC'])*u.degree)  
-    BeagleCoord = SkyCoord(ra=np.array(BeaglePhotCat['RA'])*u.degree, dec=np.array(BeaglePhotCat['DEC'])*u.degree)  
-    idx, d2d, d3d = inputCoord.match_to_catalog_sky(BeagleCoord)  
+    # Extract RA DEC of input catalogue
+    if args.input_coord[0] == "deg":
+        ra = Angle(np.array(inputData['RA']), unit=u.deg)
+    elif args.input_coord[0] == "hourangle":
+        ra = Angle(np.array(inputData['RA']), unit=u.hourangle)
+
+    if args.input_coord[1] == "deg":
+        dec = Angle(np.array(inputData['DEC']), unit=u.deg)
+    elif args.input_coord[1] == "hourangle":
+        dec = Angle(np.array(inputData['DEC']), unit=u.hourangle)
+
+    inputCoord = SkyCoord(ra=ra, dec=dec)  
+
+    # Extract RA DEC of catalogue used in Beagle run
+    if args.beagle_coord[0] == "deg":
+        ra = Angle(np.array(BeaglePhotCat['RA']), unit=u.deg)
+    elif args.beagle_coord[0] == "hourangle":
+        ra = Angle(np.array(BeaglePhotCat['RA']), unit=u.hourangle)
+
+    if args.beagle_coord[1] == "deg":
+        dec = Angle(np.array(BeaglePhotCat['DEC']), unit=u.deg)
+    elif args.beagle_coord[1] == "hourangle":
+        dec = Angle(np.array(BeaglePhotCat['DEC']), unit=u.hourangle)
+
+    BeagleCoord = SkyCoord(ra=ra, dec=dec)
 
     n_input = len(inputData.field(0))
     # Columns to be added to the catalogues
@@ -311,8 +353,8 @@ if __name__ == '__main__':
     dictTypes = list()
     colFormat = list()
 
-    dictKeys.append("ID_input") ; dictTypes.append(np.int) ; colFormat.append("4d")
-    dictKeys.append("ID_Beagle") ; dictTypes.append(np.int) ; colFormat.append("4d")
+    dictKeys.append("ID_input") ; dictTypes.append("S15") ; colFormat.append("s15")
+    dictKeys.append("ID_Beagle") ; dictTypes.append("S15") ; colFormat.append("s15")
     dictKeys.append("distance") ; dictTypes.append(np.float32) ; colFormat.append(".3f")
 
     for name in param_names:
@@ -348,8 +390,13 @@ if __name__ == '__main__':
     newCols = OrderedDict()
 
     for key, Type in zip(dictKeys, dictTypes):
-        newCols[key] = np.full(n_input, -99, Type)
-    
+        if Type is str:
+            newCols[key] = np.full(n_input, "", Type)
+        else:
+            newCols[key] = np.full(n_input, -99, Type)
+
+    # Match RA DEC of input catalogue to RA DEC of catalogue used in Beagle run
+    idx, d2d, d3d = inputCoord.match_to_catalog_sky(BeagleCoord)  
     mask = np.zeros(n_input, dtype=bool)
     ok = np.where(d2d.arcsecond <= 0.2)[0]
     input_idx = range(n_input)
@@ -358,11 +405,11 @@ if __name__ == '__main__':
     match_ok = idx[ok]
     n_ok = len(match_ok)
     # Put oriignal (input catalgoue) IDs in the output catalogue
-    newCols["ID_input"] = np.array(input_IDs, dtype=int)
+    newCols["ID_input"] = np.array(input_IDs)
 
     # Put IDs and distances of matched objects
-    newCols["ID_Beagle"][ok] = np.array(Beagle_IDs[match_ok], dtype=int)
-    newCols["distance"][ok] = d2d.arcsecond[match_ok]
+    newCols["ID_Beagle"][ok] = np.array(Beagle_IDs[match_ok])
+    newCols["distance"][ok] = d2d.arcsecond[ok]
 
     # If the user does not specify the number of processors to be used, assume that it is a serial job
     data = list()
@@ -430,5 +477,11 @@ if __name__ == '__main__':
     newTable = Table(myCols)
 
     file_name = os.path.basename(args.inputCat).split('.')[0] + '_Beagle.txt'
-    print "file_name: ", file_name
+    file_name = os.path.join(os.path.dirname(args.inputCat), file_name)
+    print "Outpu (ASCII) file_name: ", file_name
     newTable.write(file_name, format="ascii.commented_header")
+
+    file_name = os.path.basename(args.inputCat).split('.')[0] + '_Beagle.fits'
+    file_name = os.path.join(os.path.dirname(args.inputCat), file_name)
+    print "Outpu (FITS) file_name: ", file_name
+    newTable.write(file_name, format="fits", overwrite=True)
