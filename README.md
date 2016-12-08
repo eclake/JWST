@@ -8,7 +8,9 @@ In order to use the Python routines included in the ``src`` folder you must:
 
 3. get the ``JWSTpytools-0.0.3`` package
 
-4. set the ``JWSTPYTOOLS`` environment variable to point to the location of the ``JWSTpytools-0.0.3`` package
+4. get the ``JWSTpylib-1.0.4`` package and install it with the command ``python setup.py install``
+
+5. set the ``JWSTPYTOOLS`` environment variable to point to the location of the ``JWSTpytools-0.0.3`` package
 
 ## Simulating NIRSpec observations
 
