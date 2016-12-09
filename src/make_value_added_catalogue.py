@@ -353,8 +353,8 @@ if __name__ == '__main__':
     dictTypes = list()
     colFormat = list()
 
-    dictKeys.append("ID_input") ; dictTypes.append("S15") ; colFormat.append("s15")
-    dictKeys.append("ID_Beagle") ; dictTypes.append("S15") ; colFormat.append("s15")
+    dictKeys.append("ID_input") ; dictTypes.append("S15") ; colFormat.append("s")
+    dictKeys.append("ID_Beagle") ; dictTypes.append("S15") ; colFormat.append("s")
     dictKeys.append("distance") ; dictTypes.append(np.float32) ; colFormat.append(".3f")
 
     for name in param_names:
@@ -390,8 +390,8 @@ if __name__ == '__main__':
     newCols = OrderedDict()
 
     for key, Type in zip(dictKeys, dictTypes):
-        if Type is str:
-            newCols[key] = np.full(n_input, "", Type)
+        if isinstance(Type, str):
+            newCols[key] = np.full(n_input, "-99", Type)
         else:
             newCols[key] = np.full(n_input, -99, Type)
 
