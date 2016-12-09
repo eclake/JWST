@@ -8,7 +8,7 @@
 
 # Creation of the input spectrum (command-line sequence)
 import matplotlib
-matplotlib.use('GTKAgg')
+#matplotlib.use('GTKAgg')
 import os
 import sys
 sys.path.append(os.path.join(os.environ['PYP_BEAGLE'], "PyP-BEAGLE"))
@@ -452,9 +452,13 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-            '--plot', 
-            dest='plot', 
-            action='store_true')
+        '-o', '--output-dir',
+        help="Output directory",
+        action="store", 
+        type=str, 
+        dest="output_dir", 
+        required=True
+    )
 
     parser.add_argument(
         '-p', '--parameter-file',
@@ -463,6 +467,25 @@ if __name__ == '__main__':
         type=str, 
         dest="param_file"
     )
+
+    parser.add_argument(
+        '--UVJ', 
+        help="Use UVJ colours to separete SF and quiescent galaxies. By default the columns \
+                '_Bessel_U_ABS', '_Bessel_U_ABS', and '_TwoMass_J_ABS' must be present in \
+                the output Beagle FITS file.",
+        dest='UVJ', 
+        action='store_true'
+        )
+
+    parser.add_argument(
+        '--UVJ-columns', 
+        help="Name of the columns in the Beagle output FITS file containing the UVJ magnitudes.",
+        action="store", 
+        type=str, 
+        dest="UVJ_columns", 
+        nargs=3,
+        default=['_Bessel_U_ABS', '_Bessel_V_ABS', '_TwoMass_J_ABS']
+        )
 
     # Number of processors to use in the multi-processor parts of the analysis
     parser.add_argument(
@@ -518,6 +541,12 @@ if __name__ == '__main__':
         dest="params_ranges"
     )
 
+    parser.add_argument(
+        '--plot', 
+        dest='plot', 
+        action='store_true'
+    )
+
     # Get parsed arguments
     args = parser.parse_args()    
 
@@ -546,15 +575,15 @@ if __name__ == '__main__':
     file_list = [os.path.join(args.results_dir, file) for file in file_list]
 
     # Finally, write the FITS tables, one per draw
-    fold = args.results_dir.split('BEAGLE_results')[1][1:] + args.folder_suffix
-    folder = os.path.join('/home/jchevall/JWST/Simulations', fold)
-    print "folder:", folder
-    if not os.path.exists(folder):
-        os.makedirs(folder)
+    #fold = args.results_dir.split('BEAGLE_results')[1][1:] + args.folder_suffix
+    #folder = os.path.join('/home/jchevall/JWST/Simulations', fold)
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
-    plots_folder = os.path.join(folder, 'plots')
-    if not os.path.exists(plots_folder):
-        os.makedirs(plots_folder)
+    if args.plot:
+        plots_folder = os.path.join(args.output_dir, 'plots')
+        if not os.path.exists(plots_folder):
+            os.makedirs(plots_folder)
 
     if args.n_objects < 0:
         args.n_objects = len(IDs)
@@ -569,10 +598,12 @@ if __name__ == '__main__':
     weight_func_args['distribution'] = 'gaussian'
 
     #
-    UVJ_data = OrderedDict()
-    UVJ_data['U'] = {"colName":"_Bessel_U_ABS", "extName":"absolute magnitudes"}
-    UVJ_data['V'] = {"colName":"_Bessel_V_ABS", "extName":"absolute magnitudes"}
-    UVJ_data['J'] = {"colName":"_TwoMass_J_ABS", "extName":"absolute magnitudes"}
+    UVJ_data = None
+    if args.UVJ:
+        UVJ_data = OrderedDict()
+        
+        for key, col in zip(('U', 'V', 'J'), args.UVJ_columns):
+            UVJ_data[key] = {"colName":col, "extName":"absolute magnitudes"}
 
     # Restrict the allowed solutions to have some parameters within defined ranges
     params_ranges=None
@@ -651,6 +682,6 @@ if __name__ == '__main__':
 
 
     for i, (key, value) in enumerate(data.iteritems()):
-        name = os.path.join(folder, 'Summary_MC_'+str(i)+args.suffix+'.fits')
+        name = os.path.join(args.output_dir, 'Summary_MC_'+str(i)+args.suffix+'.fits')
         value.writeto(name, clobber=True)
 
