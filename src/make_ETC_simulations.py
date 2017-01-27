@@ -27,7 +27,7 @@ show_plot = False
 
 # Name of the Python script that creates the simulated NIRSpec observations
 jwstpytools = os.environ['JWSTPYTOOLS']
-jwstpytools_procedure = os.path.join(jwstpytools, "sensitivity/p_spectrumMOS1x3.py")
+jwstpytools_procedure = os.path.join(jwstpytools, "sensitivity/p_spectrumMOS1x3_JC.py")
 jwstpytools_data = os.path.join(jwstpytools, "data")
 pce = "PCE-NIRS30-IFU30-FPA106"
 
@@ -37,10 +37,16 @@ ETC_input_dir = ""
 # How many exposures?
 #nbexps = ("108", "36", "36", "36")
 
-def compute_ETC_simulation(input_file, FWA, GWA, nbexp, output_folder, output_prefix):
+def compute_ETC_simulation(input_file, FWA, GWA, nbexp, output_folder, output_prefix,
+        sersic=None, effective_radius=None):
 
     sys_command = "python2.7 " + jwstpytools_procedure + " " + input_file + " " + jwstpytools_data + " " + pce \
-            + " " + FWA + " " + GWA + " PS " + nbexp + " " + output_folder + " " + output_prefix
+            + " " + FWA + " " + GWA + " PS " + nbexp + " " + output_folder + " " + output_prefix 
+
+    if sersic is not None and effective_radius is not None:
+            sys_command += " --sersic " + str(sersic) + " --effective-radius " + str(effective_radius)
+
+    print "sys_command: ", sys_command
 
     os.system(sys_command)
 
@@ -125,7 +131,8 @@ def write_ETC_input_file(wl, flux, redshift, file_name):
 def make_ETC_simulations_single(ETC_simulation_prefix, 
         wl, sed, redshift,
         recompute, 
-        FWAs, GWAs, nbexps):
+        FWAs, GWAs, nbexps,
+        sersic=None, effective_radius=None):
 
     # SED (units are those putput from Beagle, i.e. erg s^-1 cm^-2 A^-1)
     # Redshfit of the i-th object (i.e., i-th row in the input FITS catalogue)
@@ -154,7 +161,7 @@ def make_ETC_simulations_single(ETC_simulation_prefix,
         if not os.path.isfile(ETC_output_file) or recompute:
 
             # Run the actual scripts that compute the ETC-like simulated NIRSpec observation
-            compute_ETC_simulation(ETC_input_file, FWA, GWA, nbexp, ETC_output_dir, ETC_simulation_prefix)
+            compute_ETC_simulation(ETC_input_file, FWA, GWA, nbexp, ETC_output_dir, ETC_simulation_prefix, sersic, effective_radius)
 
             # The SED output from the ETC simulator is in units of Jansky
             # (F_nu), while Beagle works in F_lambda. We therefore add two
@@ -250,12 +257,28 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-        '-nproc',
+        '--nproc',
         help="Number of processors to use",
         action="store", 
         type=int, 
         dest="nproc",
         default=-1
+    )
+
+    parser.add_argument(
+        '--sersic',
+        help="Sersic index of the source",
+        action="store", 
+        type=float, 
+        dest="sersic"
+    )
+
+    parser.add_argument(
+        '--effective-radius',
+        help="Effective radius (in arcsec) of the source",
+        action="store", 
+        type=float, 
+        dest="effective_radius"
     )
 
     parser.add_argument(
@@ -395,7 +418,9 @@ if __name__ == '__main__':
                 recompute=recompute,
                 FWAs=args.FWAs,
                 GWAs=args.GWAs,
-                nbexps=args.nbexps
+                nbexps=args.nbexps,
+                sersic=args.sersic,
+                effective_radius=args.effective_radius
                 )
     
     # Otherwise you use pathos to run in parallel on multiple CPUs
@@ -413,5 +438,7 @@ if __name__ == '__main__':
             (recompute,)*len(rows),
             (args.FWAs,)*len(rows),
             (args.GWAs,)*len(rows),
-            (args.nbexps,)*len(rows)
+            (args.nbexps,)*len(rows),
+            (args.sersic,)*len(rows),
+            (args.effective_radius,)*len(rows)
             )
