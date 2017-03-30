@@ -29,7 +29,9 @@ show_plot = False
 jwstpytools = os.environ['JWSTPYTOOLS']
 jwstpytools_procedure = os.path.join(jwstpytools, "sensitivity/p_spectrumMOS1x3_JC.py")
 jwstpytools_data = os.path.join(jwstpytools, "data")
-pce = "PCE-NIRS30-IFU30-FPA106"
+
+# We use the newest Photon Counting Efficiency tables, the same that Pierre provided STScI for their ETC
+pce = "PCE-OTE07-NIRS40-IFU31-FPA106-ETC"
 
 ETC_output_dir = ""
 ETC_input_dir = ""
