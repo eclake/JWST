@@ -2,23 +2,31 @@ import os
 import numpy as np
 from astropy.io import fits
 from scipy import interpolate
+import re
 
 def isclose(a, b, rel_tol=1e-07, abs_tol=0.0):
     return abs(a-b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
 
 class MSAThroughput(object):
 
-    def __init__(self, folder):
+    def __init__(self, folder, aperture_type="OPEN"):
+
+        aperture_types = ("PITCH", "OPEN", "MID", "CONST", "TIGHT")
+        if aperture_type not in aperture_types:
+             raise Exception('Aperture type`' + aperture_type + '` not supported!')
 
         file_list = list()
 
         # Read in the model
         for file in sorted(os.listdir(folder)):
-            if file.endswith(".fits"):
+            if file.endswith(".fits") and aperture_type in file:
                 file_list.append(file)
 
-        file_list = ["n1_openshutter.fits", "n4_openshutter.fits", "n8_openshutter.fits"]
-        sersic = [1, 4, 8]
+        sersic = list()
+        for file in file_list:
+            f = file.split('_')[0]
+            f = map(int, re.findall('\d+', f))
+            sersic.append(f[0])
 
         self.throughput = None
 
@@ -123,11 +131,32 @@ class MSAThroughput(object):
 
 if __name__ == '__main__':
 
-    m = MSAThroughput("/Users/jchevall/People/Maseda")
+    m = MSAThroughput("/Users/jchevall/JWST/code/JWSTpytools-0.0.3/data/slit_losses")
 
-    wl = np.arange(0.7, 4.5, 0.25)
-    through = m.get_throughput(wl=wl, Sersic=1, effective_radius=0.1)
-    print wl, through
-    for w, t in zip(wl, through): 
-        print "wl, t: ", w, t
+    # Create table of slit losses at 4.5 micron for Emma
+    dropout_bands = ('B', 'V', 'I', 'Z', 'Y')
+    redshifts = (4, 5, 6, 7, 8)
+    sizes = (0.10, 0.11, 0.12, 0.13, 0.145)
+    sersic = 1.0
+    wl = (4.5, )
+
+    print "redshift wl/micron size/arcsec throughput"
+    for size, redshift in zip(sizes, redshifts):
+        throughput = m.get_throughput(wl=wl, Sersic=sersic, effective_radius=size)
+        print redshift, wl[0], size, throughput[0]
+
+    # Create table of slit losses at redshifted Halpha wl
+    wl = np.array((0.6563, ))
+    print "redshift wl/micron size/arcsec throughput"
+    for size, redshift in zip(sizes, redshifts):
+        Ha_wl = wl*(1.0+redshift)
+        throughput = m.get_throughput(wl=Ha_wl, Sersic=sersic, effective_radius=size)
+        print redshift, Ha_wl[0], size, throughput[0]
+
+
+    #wl = np.arange(0.7, 4.5, 0.25)
+    #through = m.get_throughput(wl=wl, Sersic=1, effective_radius=0.1)
+    #print wl, through
+    #for w, t in zip(wl, through): 
+    #    print "wl, t: ", w, t
 
