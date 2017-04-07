@@ -11,6 +11,7 @@ import argparse
 import ConfigParser
 import numpy as np
 from collections import OrderedDict
+from scipy.interpolate import interp1d
 from collections import defaultdict
 import itertools
 import matplotlib.pyplot as plt
@@ -230,6 +231,46 @@ def extract_data(ID, n_par, redshift_index, redshift_type=None):
 
     return outData
 
+def get1DInterval(ID, param_names, levels=[68., 95.]):
+
+    suffix = BeagleDirectories.suffix + '.fits.gz'
+
+    full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
+    if not os.path.isfile(full_path):
+        return None
+
+    param_values = OrderedDict()
+    with fits.open(full_path) as f:
+        probability = f['POSTERIOR PDF'].data['probability']
+        for name in param_names:
+            param_values[name] = f['POSTERIOR PDF'].data[name]
+
+    output = OrderedDict()
+    for key, value in param_values.iteritems():
+
+        sort_ = np.argsort(value)
+
+        cumul_pdf = np.cumsum(probability[sort_])
+        cumul_pdf /= cumul_pdf[len(cumul_pdf)-1]
+
+        # Get the interpolant of the cumulative probability
+        f_interp = interp1d(cumul_pdf, value[sort_])
+
+        # You shoud integrate rather than summing here
+        mean = np.sum(probability * value) / np.sum(probability)
+
+        median = f_interp(0.5)
+
+        interval = OrderedDict()
+        for lev in levels:
+
+            low, high = f_interp([0.5*(1.-lev/100.), 1.-0.5*(1.-lev/100.)])
+            interval[str(lev)] = np.array([low,high])
+
+        output[key] = {'mean':mean, 'median':median, 'regions':interval}
+
+    return output
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
@@ -290,6 +331,16 @@ if __name__ == '__main__':
         default=-1
     )
 
+    parser.add_argument(
+        '--credible-regions',
+        help="Credible regions to calculate",
+        action="store", 
+        type=float, 
+        nargs='+',
+        dest="credible_regions"
+    )
+
+
     # Get parsed arguments
     args = parser.parse_args()
 
@@ -347,24 +398,29 @@ if __name__ == '__main__':
     n_input = len(inputData.field(0))
     # Columns to be added to the catalogues
     param_names = ["redshift", "mass"]
-    paramKeys = ["z_beagle", "z_beagle_err", "M", "M_err", "sSFR", "sSFR_err"]
 
-    dictKeys = list()
-    dictTypes = list()
-    colFormat = list()
+    dictKeys = OrderedDict()
 
-    dictKeys.append("ID_input") ; dictTypes.append("S15") ; colFormat.append("s")
-    dictKeys.append("ID_Beagle") ; dictTypes.append("S15") ; colFormat.append("s")
-    dictKeys.append("distance") ; dictTypes.append(np.float32) ; colFormat.append(".3f")
+    dictKeys["ID_input"] = {"type":"S15", "format":"s"}
+    dictKeys["ID_Beagle"] = {"type":"S15", "format":"s"}
+    dictKeys["distance"] = {"type":np.float32, "format":".3f"}
 
     for name in param_names:
         for j in range(2):
             suff = str(j+1)
             key = name+"_beagle_"+suff
-            dictKeys.append(key) ; dictTypes.append(np.float32) ; colFormat.append(".3f")
-            key = name+"_beagle_err_"+suff
-            dictKeys.append(key) ; dictTypes.append(np.float32) ; colFormat.append(".3f")
+            dictKeys[key] = {"type":np.float32, "format":".3f"}
 
+            key = name+"_beagle_err_"+suff
+            dictKeys[key] = {"type":np.float32, "format":".3f"}
+
+        if args.credible_regions is not None:
+            for region in args.credible_regions:
+                key = name + "_" + str(region) + "_low"
+                dictKeys[key] = {"type":np.float32, "format":".3f"}
+                key = name + "_" + str(region) + "_up"
+                dictKeys[key] = {"type":np.float32, "format":".3f"}
+    
     paramDict = OrderedDict()
     # Determine number of free parameters by counting columns in Beagle output file
     suffix = BeagleDirectories.suffix + '.fits.gz'
@@ -383,13 +439,14 @@ if __name__ == '__main__':
 
             break
 
-    dictKeys.append("deltaEvidence") ; dictTypes.append(np.float32) ; colFormat.append(".2f")
-    dictKeys.append("KF_flag") ; dictTypes.append(np.int) ; colFormat.append("1d")
-    dictKeys.append("P1/P2") ; dictTypes.append(np.float32) ; colFormat.append(".3e")
+    dictKeys["deltaEvidence"] = {"type":np.float32, "format":".2f"}
+    dictKeys["KF_flag"] = {"type":np.int, "format":"1d"}
+    dictKeys["P1/P2"] = {"type":np.float32, "format":".3e"}
 
     newCols = OrderedDict()
 
-    for key, Type in zip(dictKeys, dictTypes):
+    for key, value in dictKeys.iteritems():
+        Type = value["type"]
         if isinstance(Type, str):
             newCols[key] = np.full(n_input, "-99", Type)
         else:
@@ -411,7 +468,13 @@ if __name__ == '__main__':
     newCols["ID_Beagle"][ok] = np.array(Beagle_IDs[match_ok])
     newCols["distance"][ok] = d2d.arcsecond[ok]
 
+    #print "-------> ", get1DInterval(Beagle_IDs[match_ok[0]], param_names=param_names, levels=[68., 95., 99.7])
+
+    #pause
     # If the user does not specify the number of processors to be used, assume that it is a serial job
+    if args.credible_regions is not None:
+        data_cred_region = list()
+
     data = list()
     if args.nproc <= 0:
 
@@ -423,6 +486,14 @@ if __name__ == '__main__':
                     )
 
             data.append(d)
+
+            if args.credible_regions is not None:
+                c = get1DInterval(ID, 
+                        param_names=param_names, 
+                        levels=args.credible_regions
+                        )
+
+                data_cred_region.append(c)
     
     # Otherwise you use pathos to run in parallel on multiple CPUs
     else:
@@ -436,6 +507,13 @@ if __name__ == '__main__':
             (n_par,)*n_ok,
             (paramDict["redshift"],)*n_ok
             )
+
+        if args.credible_regions is not None:
+            data_cred_region = pool.map(get1DInterval,
+                    Beagle_IDs[match_ok],
+                    (param_names,)*n_ok,
+                    (args.credible_regions,)*n_ok
+                    )
 
     for i, indx in enumerate(input_idx):
 
@@ -469,19 +547,28 @@ if __name__ == '__main__':
             else:
                 newCols["KF_flag"][indx] = 3
     
+        if args.credible_regions is not None:
+            c = data_cred_region[i]
+            if c is not None:
+                for name in param_names:
+                    for region in args.credible_regions:
+                        key = name + "_" + str(region) + "_low"
+                        newCols[key][indx] = c[name]["regions"][str(region)][0]
+                        key = name + "_" + str(region) + "_up"
+                        newCols[key][indx] = c[name]["regions"][str(region)][1]
+
+
     myCols = list()
     for i, (key, col) in enumerate(newCols.iteritems()):
-        tmpCol = Column(col, name=key, dtype=dictTypes[i], format='%'+colFormat[i])
+        tmpCol = Column(col, name=key, dtype=dictKeys[key]["type"], format='%'+dictKeys[key]['format'])
         myCols.append(tmpCol)
 
     newTable = Table(myCols)
 
-    file_name = os.path.basename(args.inputCat).split('.')[0] + '_Beagle.txt'
-    file_name = os.path.join(os.path.dirname(args.inputCat), file_name)
-    print "Outpu (ASCII) file_name: ", file_name
+    file_name = os.path.splitext(args.inputCat)[0] + '_Beagle_VAC.txt'
+    print "Output (ASCII) file_name: ", file_name
     newTable.write(file_name, format="ascii.commented_header")
 
-    file_name = os.path.basename(args.inputCat).split('.')[0] + '_Beagle.fits'
-    file_name = os.path.join(os.path.dirname(args.inputCat), file_name)
-    print "Outpu (FITS) file_name: ", file_name
+    file_name = os.path.splitext(args.inputCat)[0] + '_Beagle_VAC.fits'
+    print "Output (FITS) file_name: ", file_name
     newTable.write(file_name, format="fits", overwrite=True)
