@@ -469,6 +469,15 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
+        '--seed',
+        help="Seed for the random number generator.",
+        action="store", 
+        type=int, 
+        dest="seed",
+        default=123456
+    )
+
+    parser.add_argument(
         '--UVJ', 
         help="Use UVJ colours to separete SF and quiescent galaxies. By default the columns \
                 '_Bessel_U_ABS', '_Bessel_U_ABS', and '_TwoMass_J_ABS' must be present in \
@@ -551,8 +560,7 @@ if __name__ == '__main__':
     args = parser.parse_args()    
 
     # Initialize seed for random number generator
-    ranSeed = 123456
-    np.random.seed(ranSeed)
+    np.random.seed(args.seed)
 
     # Read parameter file
     make_plot=False
