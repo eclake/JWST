@@ -9,7 +9,7 @@ def isclose(a, b, rel_tol=1e-07, abs_tol=0.0):
 
 class MSAThroughput(object):
 
-    def __init__(self, folder, aperture_type="OPEN"):
+    def __init__(self, folder, aperture_type="OPEN", throughput_type="relative"):
 
         aperture_types = ("PITCH", "OPEN", "MID", "CONST", "TIGHT")
         if aperture_type not in aperture_types:
@@ -43,7 +43,10 @@ class MSAThroughput(object):
             unique_wl = reduce(lambda l, x: l if x in l else l+[x], wl, [])
             self.z = np.array(unique_wl)*1.E+06
             r_eff = hdulist[1].data["r_eff"]
-            throughput = hdulist[1].data["correctedthroughput"]
+            if throughput_type == "relative":
+                throughput = hdulist[1].data["correctedthroughput"]
+            elif throughput_type == "total":
+                throughput = hdulist[1].data["throughput"]
     
             unique_r_eff = reduce(lambda l, x: l if x in l else l+[x], r_eff, [])
 
@@ -120,10 +123,10 @@ class MSAThroughput(object):
         f_wl[i0:i1] = f(wl[i0:i1])
 
         if wl[0] < self.z[0]:
-            f_wl[0:i0] = f_wl[i0]
+            f_wl[0:i0] = f(self.z[0])
 
         if wl[-1] > self.z[-1]:
-            f_wl[i1:] = f_wl[i1-1]
+            f_wl[i1:] = f(self.z[-1])
 
         return f_wl
 
@@ -131,19 +134,19 @@ class MSAThroughput(object):
 
 if __name__ == '__main__':
 
-    m = MSAThroughput("/Users/jchevall/JWST/code/JWSTpytools-0.0.3/data/slit_losses")
+    m = MSAThroughput("/Users/jchevall/JWST/code/JWSTpytools-0.0.3/data/slit_losses", throughput_type="total")
 
     # Create table of slit losses at 4.5 micron for Emma
     dropout_bands = ('B', 'V', 'I', 'Z', 'Y')
-    redshifts = (4, 5, 6, 7, 8)
-    sizes = (0.10, 0.11, 0.12, 0.13, 0.145)
+    redshifts = (8, 4, 5, 6, 7, 8)
+    sizes = (0.06, 0.10, 0.11, 0.12, 0.13, 0.145)
     sersic = 1.0
-    wl = (4.5, )
+    wl = np.array([0.6, 2.5,  5.3])
 
     print "redshift wl/micron size/arcsec throughput"
     for size, redshift in zip(sizes, redshifts):
         throughput = m.get_throughput(wl=wl, Sersic=sersic, effective_radius=size)
-        print redshift, wl[0], size, throughput[0]
+        print redshift, wl, size, throughput
 
     # Create table of slit losses at redshifted Halpha wl
     wl = np.array((0.6563, ))
