@@ -97,33 +97,50 @@ def draw_rows_from_interval(data, probability, n_draws=1, level=0.68):
 
     return np.random.choice(indices[ok], size=n_draws)
 
+
 # ****************************************************************************************
-def mass_sfr(mass, SFR, z, distribution='t-Student'):
-    #Speagle+ 14 - log(M*) = (0.84-0.026*t)logM - (6.51-0.11*t)
-    #cosmology used in paper to calculate ages (t) is (h,omega_m,omega_lambda) = (0.7,0.3,0.7)
-    #Shivaei+ 15 measure scatter in log(SFR(Halpha))-log(M*) to be 0.3 dex (corrected for uncertainties)
-    #We employ cauchy scatter - although I think it should only be scatter in one direction...
-    cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
-    t = cosmo.age(z).value
-    mean = (0.84-0.026*t)*mass - (6.51-0.11*t)
+def mass_logOH_sfr(mass, SFR, logOH, scatter='t-Student', df=3, scale=0.3):
+    # From Mannucci et al. (2010), followng our implementation in Williams et
+    # al (2018), sec 3.4.3 (equations 15-17)
 
-    pdf = np.zeros(len(mass))
+    logM = np.log10(mass)
+    logSFR = np.log10(SFR)
 
-    for i, value in enumerate(SFR):
+    mean_logOH = -0.14*logSFR + 0.37*logM + 4.82 # In units of 12 + log(O/H)
 
-        if distribution.lower() == 't-student':
-            pdf[i] = stats.t.pdf(SFR[i], df=3, loc=mean[i], scale=0.3)
-        elif distribution.lower() == 'gaussian':
-            pdf[i] = stats.norm.pdf(SFR[i], loc=mean[i], scale=0.3)
-        elif distribution.lower() == 'cauchy':
-            pdf[i] = stats.cauchy.pdf(SFR[i], loc=mean[i], scale=0.3)
+    pdf = np.zeros(len(logM))
+
+    for i in range(len(logOH)):
+
+        if scatter.lower() == 't-student':
+            pdf[i] = stats.t.pdf(logOH[i], df=df, loc=mean_logOH[i], scale=scale)
         else:
-            raise ValueError('The input distribution '+distribution+' is not supported!')
+            raise ValueError('The input scatter '+scatter+' is not supported!')
 
     return pdf
 
 # ****************************************************************************************
-def mass_sfr_test(mass, SFR, redshift, distribution='t-Student'):
+def metallicity_logU(metallicity, logU, scatter='t-Student', df=3, scale=0.3):
+    # From Carton et al. (2017), followng our implementation in Williams et
+    # al (2018), sec 3.4.3 (equation 18)
+    
+    Z_sun = 0.01524
+    logZ = np.log10(metallicity/Z_sun)
+    mean_logU = -0.8 * logZ -3.58  # metallicity expressed in log(Z/Z_sun)
+
+    pdf = np.zeros(len(logZ))
+
+    for i in range(len(logU)):
+
+        if scatter.lower() == 't-student':
+            pdf[i] = stats.t.pdf(logU[i], df=df, loc=mean_logU[i], scale=scale)
+        else:
+            raise ValueError('The input scatter '+scatter+' is not supported!')
+
+    return pdf
+
+# ****************************************************************************************
+def mass_sfr(mass, SFR, redshift, scatter='t-Student', df=3, scale=0.3):
     #Speagle+ 14 - log(M*) = (0.84-0.026*t)logM - (6.51-0.11*t)
     #cosmology used in paper to calculate ages (t) is (h,omega_m,omega_lambda) = (0.7,0.3,0.7)
     #Shivaei+ 15 measure scatter in log(SFR(Halpha))-log(M*) to be 0.3 dex (corrected for uncertainties)
@@ -133,20 +150,20 @@ def mass_sfr_test(mass, SFR, redshift, distribution='t-Student'):
 
     cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
     t = cosmo.age(redshift).value
-    mean = (0.84-0.026*t)*logM - (6.51-0.11*t)
+    mean_SFR = (0.84-0.026*t)*logM - (6.51-0.11*t)
 
     pdf = np.zeros(len(logM))
 
-    for i, value in enumerate(logSFR):
+    for i in range(len(logSFR)):
 
-        if distribution.lower() == 't-student':
-            pdf[i] = stats.t.pdf(logSFR[i], df=3, loc=mean[i], scale=0.3)
-        elif distribution.lower() == 'gaussian':
-            pdf[i] = stats.norm.pdf(logSFR[i], loc=mean[i], scale=0.3)
-        elif distribution.lower() == 'cauchy':
-            pdf[i] = stats.cauchy.pdf(logSFR[i], loc=mean[i], scale=0.3)
+        if scatter.lower() == 't-student':
+            pdf[i] = stats.t.pdf(logSFR[i], df=df, loc=mean_SFR[i], scale=scale)
+        elif scatter.lower() == 'gaussian':
+            pdf[i] = stats.norm.pdf(logSFR[i], loc=mean_SFR[i], scale=0.3)
+        elif scatter.lower() == 'cauchy':
+            pdf[i] = stats.cauchy.pdf(logSFR[i], loc=mean_SFR[i], scale=0.3)
         else:
-            raise ValueError('The input distribution '+distribution+' is not supported!')
+            raise ValueError('The input scatter '+scatter+' is not supported!')
 
     return pdf
 
@@ -276,7 +293,6 @@ def draw_rows_from_posterior(ID, fileName,
         n_samples=1,
         params_ranges=None,
         weight_func=None, 
-        weight_func_args=None,
         UVJ_data=None,
         extensions=None,
         make_plot=False):
@@ -352,25 +368,30 @@ def draw_rows_from_posterior(ID, fileName,
         rows_indices[quiescent_indices] = rows[quiescent_indices]
 
     if n_star_forming > 0:
+        reweighted_pdf = post
 
         # Can pass a "weight_func" that will take as input some parameters of the
         # Beagle output and compute a weight, that will be used to multiply the
         # posterior PDF
         if weight_func is not None:
-            func_args = OrderedDict()
-            for key, value in weight_func_args.iteritems():
+            # Cycle over the different weight functions
+            for key, value in weight_func.iteritems():
+                func_args = OrderedDict()
                 # Load the data from the Beagle FITS file into a dictionary
-                if "colName" in value:
-                    data = hdulist[value["extName"]].data[value["colName"]]
-                    func_args[key] = data
-                # Assume that the other entries of the dictionary correspond to kwargs of the weight_func
-                else:
-                    func_args[key] = value
-        
-            # Compute the actual weights
-            weights = weight_func(**func_args)
+                for _key, _value in value['variables'].iteritems():
+                    data = hdulist[_value["extName"]].data[_value["colName"]]
+                    func_args[_key] = data
 
-        reweighted_pdf = post*weights
+                # Assume that the other entries of the dictionary correspond to kwargs of the weight_func
+                for _key, _value in value.iteritems():
+                    if 'variables' not in _key and 'function' not in _key:
+                        func_args[_key] = _value
+        
+                # Compute the actual weights
+                weights = value['function'](**func_args)
+
+                # Multiply the posterior PDF by the weights
+                reweighted_pdf *= weights
         #reweighted_pdf = weights
         #reweighted_pdf = post
 
@@ -599,11 +620,39 @@ if __name__ == '__main__':
     # Arguments used by the "weight function", which is multiplied by the
     # posterior pdf to then select solutions from all the possible ones which
     # are output from Beagle
-    weight_func_args = OrderedDict()
-    weight_func_args['mass'] = {"colName":"M_star", "extName":"galaxy properties"}
-    weight_func_args['SFR'] = {"colName":"SFR", "extName":"star formation"}
-    weight_func_args['redshift'] = {"colName":"redshift", "extName":"galaxy properties"}
-    weight_func_args['distribution'] = 'gaussian'
+    weight_func = OrderedDict()
+
+    # Mass-SFR relation
+    weight_func['mass_SFR']= OrderedDict()
+    weight_func['mass_SFR']['function'] = mass_sfr
+    weight_func['mass_SFR']['scatter'] = 't-Student'
+    weight_func['mass_SFR']['scale'] = 0.3
+    weight_func['mass_SFR']['variables'] = {
+            'mass' : {"colName":"M_star", "extName":"galaxy properties"},
+            'SFR' : {"colName":"SFR", "extName":"star formation"},
+            'redshift' : {"colName":"redshift", "extName":"galaxy properties"}
+            }
+
+    # Mass-metallicity-SFR relation
+    weight_func['mass_logOH_sfr']= OrderedDict()
+    weight_func['mass_logOH_sfr']['function'] = mass_logOH_sfr
+    weight_func['mass_logOH_sfr']['scatter'] = 't-Student'
+    weight_func['mass_logOH_sfr']['scale'] = 0.2
+    weight_func['mass_logOH_sfr']['variables'] = {
+            'mass' : {"colName":"M_star", "extName":"galaxy properties"},
+            'SFR' : {"colName":"sfr", "extName":"star formation"},
+            'logOH' : {"colName":"logOH", "extName":"nebular emission"}
+            }
+
+    # Metallicity-logU relation
+    weight_func['metallicity_logU']= OrderedDict()
+    weight_func['metallicity_logU']['function'] = metallicity_logU
+    weight_func['metallicity_logU']['scatter'] = 't-Student'
+    weight_func['metallicity_logU']['scale'] = 0.2
+    weight_func['metallicity_logU']['variables'] = {
+            'metallicity' : {"colName":"Z_ISM", "extName":"nebular emission"},
+            'logU' : {"colName":"logU", "extName":"nebular emission"}
+            }
 
     #
     UVJ_data = None
@@ -628,8 +677,7 @@ if __name__ == '__main__':
             res = draw_rows_from_posterior(ID, file, 
                     n_samples=args.n_samples,
                     params_ranges=params_ranges,
-                    weight_func=mass_sfr_test,
-                    weight_func_args=weight_func_args,
+                    weight_func=weight_func,
                     UVJ_data=UVJ_data,
                     extensions=extensions,
                     make_plot=make_plot
@@ -644,8 +692,7 @@ if __name__ == '__main__':
         results = pool.map(draw_rows_from_posterior, IDs, file_list, 
                 (args.n_samples,)*len(IDs),
                 (params_ranges,)*len(IDs),
-                (mass_sfr_test,)*len(IDs),
-                (weight_func_args,)*len(IDs),
+                (weight_func,)*len(IDs),
                 (UVJ_data,)*len(IDs),
                 (extensions,)*len(IDs)
                 )
