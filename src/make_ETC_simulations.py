@@ -11,6 +11,7 @@ from JWSTpylib import c_spectrum
 import os
 import random
 from astropy.io import fits
+from astropy.cosmology import FlatLambdaCDM
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
@@ -201,6 +202,23 @@ def make_ETC_simulations_single(ETC_simulation_prefix,
 
             hduETC.close()
 
+def Shibuya_sizes(redshift, L_UV):
+
+    # See Williams et al 2018, Sec 5.2 (equation 28)
+    M_UV_0 = -21.
+    L_UV_0 = 10.**(-0.4*(M_UV_0-48.6))
+
+    r_eff_0 = 6.9 * (1.+redshift)**(-1.2)
+    r_eff = r_eff_0 * (L_UV/L_UV_0)**0.27
+
+    print "Median radius (kpc): ", np.median(r_eff)
+
+    # We use the same cosmology as in Shibuya to convert the sizes back in arcsec
+    cosmo = FlatLambdaCDM(H0=70, Om0=0.3, Tcmb0=2.725)
+    r_eff *= cosmo.arcsec_per_kpc_proper(redshift)
+    print "Median radius (arcsec): ", np.median(r_eff)
+
+    return r_eff
 
 if __name__ == '__main__':
 
@@ -279,7 +297,6 @@ if __name__ == '__main__':
         '--effective-radius',
         help="Effective radius (in arcsec) of the source",
         action="store", 
-        type=float, 
         dest="effective_radius"
     )
 
@@ -372,6 +389,18 @@ if __name__ == '__main__':
     # Get the redshifts of the different SEDs
     redshifts = hdulist['galaxy properties'].data['redshift']
 
+    # If the args.effective_radius is a number, then use the same radius for all galaxies
+    if args.effective_radius is not None:
+        try:
+            r_eff = (float(args.effective_radius),)*len(redshifts)
+        except:
+            if args.effective_radius.lower() == 'shibuya+2015':
+                L_UV = 10.**(hdulist['galaxy properties'].data['L_UV'])
+                r_eff = Shibuya_sizes(redshift=redshifts, L_UV=L_UV)
+            else:
+                raise ValueError("Optional argument --effective-radius `" + args.effective_radius + 
+                        "` not recognized")
+    
     # Get the SEDs
     SEDs_ = list()
     for i in range(hdulist['full sed'].data[:,:].shape[0]):
@@ -399,8 +428,9 @@ if __name__ == '__main__':
     for row in rows:
         SEDs.append(SEDs_[row])
 
-    # Re-ordert the redshifts array to follow the suffled order of the rows
+    # Re-order the redshifts array to follow the suffled order of the rows
     redshifts = redshifts[rows]
+    r_eff = r_eff[rows]
 
     # Create a list containing the prefix used for the input and output file
     # for the ETC simulator
@@ -422,7 +452,7 @@ if __name__ == '__main__':
                 GWAs=args.GWAs,
                 nbexps=args.nbexps,
                 sersic=args.sersic,
-                effective_radius=args.effective_radius
+                effective_radius=r_eff[i]
                 )
     
     # Otherwise you use pathos to run in parallel on multiple CPUs
@@ -442,5 +472,5 @@ if __name__ == '__main__':
             (args.GWAs,)*len(rows),
             (args.nbexps,)*len(rows),
             (args.sersic,)*len(rows),
-            (args.effective_radius,)*len(rows)
+            r_eff
             )
