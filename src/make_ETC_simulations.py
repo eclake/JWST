@@ -477,5 +477,5 @@ if __name__ == '__main__':
             (args.nbexps,)*len(rows),
             (args.sersic,)*len(rows),
             r_eff,
-            (args.seed)*len(rows)
+            (args.seed,)*len(rows)
             )
