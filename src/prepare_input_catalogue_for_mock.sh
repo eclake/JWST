@@ -2,11 +2,11 @@
 
 declare -a dropouts=("B" "V" "I" "Z" "Y")
 
-suffix="_multiple_draws"
+suffix="_multiple_draws_mass_SFR_logU"
 config_json="/Users/jchevall/JWST/Simulations/XDF/config.json"
 
 for drop in "${dropouts[@]}"; do
-  files=$(ls /Users/jchevall/JWST/Simulations/XDF/${drop}_DROPOUTS/ineb_Jan16_logU_xid_delayed_SFR-Gaussian_max_age-Gaussian/Summary_MC_*_min_z_?.?${suffix}.fits)
+  files=$(ls /Users/jchevall/JWST/Simulations/XDF/${drop}_DROPOUTS/ineb_Jan16_logU_xid_delayed_SFR-Gaussian_max_age-Gaussian_weights_mass_SFR_logU/Summary_MC_*_min_z_?_min_M_?e?${suffix}.fits)
   for file in $files ; do
     i=$(awk -v a="$file" -v b=".fits" 'BEGIN{print index(a,b)}')
     output=${file:0:$i-1}"_input_for_mock.fits"
