@@ -100,6 +100,6 @@ if __name__ == '__main__':
         i0 += nrows
 
     name = os.path.join(output_folder, catalogue_name)
-    new_hdulist.writeto(name, clobber=True)
+    new_hdulist.writeto(name, overwrite=True)
 
 

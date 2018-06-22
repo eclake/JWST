@@ -87,7 +87,7 @@ if __name__ == '__main__':
 
     newhdulist.append(newhdu)
 
-    newhdu.writeto(args.output, clobber=True)
+    newhdu.writeto(args.output, overwrite=True)
 
     hdulist.close()
 

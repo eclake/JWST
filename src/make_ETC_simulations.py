@@ -201,7 +201,7 @@ def make_ETC_simulations_single(ETC_simulation_prefix,
             hduETC[1].header['redshift'] = float(redshift)
 
             # Overwrite the FITS file
-            hduETC.writeto(ETC_output_file, clobber=True)
+            hduETC.writeto(ETC_output_file, overwrite=True)
 
             hduETC.close()
 

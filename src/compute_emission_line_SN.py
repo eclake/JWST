@@ -314,4 +314,4 @@ if __name__ == '__main__':
 
 
     file_name = os.path.join(args.folder, "Emission_lines_observational_SN_MC_" + MC_draw + ".fits")
-    new_hdulist.writeto(file_name, clobber=True)
+    new_hdulist.writeto(file_name, overwrite=True)

@@ -738,5 +738,5 @@ if __name__ == '__main__':
 
     for i, (key, value) in enumerate(data.iteritems()):
         name = os.path.join(args.output_dir, 'Summary_MC_'+str(i)+args.suffix+'.fits')
-        value.writeto(name, clobber=True)
+        value.writeto(name, overwrite=True)
 
