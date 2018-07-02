@@ -293,21 +293,21 @@ pcebackground.m_setDataPath(dataPath)
 pcebackground.m_getSpectroscopicPCE(pceFolder, pcePrefix, aperture, 'ES', FWA, GWA)
 
 # =======================================================================
-# Wavelength range
+# Wavelength range (udpated using the JWST ETC calculator wl ranges)
 # =======================================================================
 if (GWA == 'PRISM'):
-	lbda_min = 0.60001e-6
-	lbda_max = 5.0e-6
+	lbda_min = 0.6e-6
+	lbda_max = 5.3e-6
 elif (GWA == 'G140M' or GWA == 'G140H'):
 	if (FWA == 'F070LP'):
 		lbda_min = 0.7e-6
-		lbda_max = 1.2e-6
+		lbda_max = 1.27e-6
 	else:
-		lbda_min = 1.0e-6
-		lbda_max = 1.8e-6
+		lbda_min = 0.97e-6
+		lbda_max = 1.89e-6
 elif (GWA == 'G235M' or GWA == 'G235H'):
-	lbda_min = 1.7e-6
-	lbda_max = 3.1e-6
+	lbda_min = 1.66e-6
+	lbda_max = 3.17e-6
 elif (GWA == 'G395M'):
 	lbda_min = 2.9e-6
 	lbda_max = 5.2e-6
@@ -316,8 +316,8 @@ elif (GWA == 'G395H'):
 		lbda_min = 1.0e-6
 		lbda_max = 1.25e-6
 	else:
-		lbda_min = 2.9e-6
-		lbda_max = 5.2e-6
+		lbda_min = 2.87e-6
+		lbda_max = 5.27e-6
 	
 # =======================================================================
 # Performance computation
