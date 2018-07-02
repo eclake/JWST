@@ -1,7 +1,7 @@
 #! /usr/bin/env python
 
 from astropy.io import fits
-import os, glob, sys
+import os, glob, sys, fnmatch
 import matplotlib.pyplot as plt
 import numpy as np
 import argparse
@@ -21,6 +21,14 @@ if __name__ == '__main__':
         dest="ID", 
         required=True
     )
+
+    parser.add_argument(
+        '--folder',
+        help="Folder containing the simulated NIRSpec spectra",
+        type=str,
+        dest="folder", 
+        required=True
+        )
 
     parser.add_argument(
         '--MC-draw',
@@ -47,28 +55,43 @@ if __name__ == '__main__':
         default=None
         )
 
+    parser.add_argument(
+        '--save',
+        dest="savefig", 
+        help="Save the figure as a pdf",
+        type=bool,
+        default=False
+        )
+
 
     args = parser.parse_args()    
 
-    band, ID = args.ID.split('_')
+    dropout_band = args.folder.split("_DROPOUTS")[0][-1]
 
-    folder = "/Users/jchevall/JWST/Simulations/XDF/" + band + "_DROPOUTS/" \
-            "ineb_Jan16_logU_xid_delayed_SFR-Gaussian_max_age-Gaussian/MC_" + args.MC_draw
-
-    # Read magnitude and redshift of the object
-    "_WFC3_F160W_APP"
-
-    file_name = os.path.join(folder, "input-SEDs-IRAC", 
+    file_name = os.path.join(args.folder, "MC_" + args.MC_draw, "input-SEDs-IRAC", 
             "input_SEDs_MC_" + args.MC_draw + ".fits")
 
-    row = int(ID)-1
+    row = int(args.ID)-1
     hdulist = fits.open(file_name)
     redshift = hdulist['GALAXY PROPERTIES'].data['redshift'][row]
-    m_160 = hdulist['APPARENT MAGNITUDES'].data['_WFC3_F160W_APP'][row]
+    for m in hdulist['APPARENT MAGNITUDES'].columns.names:
+        if "F160W" in m:
+            m_160 = hdulist['APPARENT MAGNITUDES'].data[m][row]
     SFR = hdulist['STAR FORMATION'].data['SFR_10'][row]
     sSFR = hdulist['STAR FORMATION'].data['sSFR'][row]
 
     hdulist.close()
+
+    _file = None
+    for file in os.listdir(args.folder):
+        if fnmatch.fnmatch(file, "Summary_MC_" + args.MC_draw + "*.fits") and "_input_for_mock" not in file:
+            _file = file
+            break
+    hdulist = fits.open(os.path.join(args.folder, _file))
+    XDF_ID = hdulist['META DATA'].data['ID'][row]
+
+    hdulist.close()
+
 
     # Load the original (noiseless) SED
     #file_name = os.path.join(folder, "ETC-simulations", "ETC-input", 
@@ -81,8 +104,8 @@ if __name__ == '__main__':
     #hdulist.close()
 
     # Load the simulated spectrum 
-    file_name = os.path.join(folder, "ETC-simulations", "ETC-output", 
-            ID + "_MC_" + args.MC_draw + "_snr_PS_CLEAR_PRISM.fits")
+    file_name = os.path.join(args.folder, "MC_" + args.MC_draw, "ETC-simulations", "ETC-output", 
+            args.ID + "_MC_" + args.MC_draw + "_snr_PS_CLEAR_PRISM.fits")
 
     hdulist = fits.open(file_name)
     wl_simul = hdulist[1].data['WAVELENGTH'] * 1.E+06
@@ -156,17 +179,19 @@ if __name__ == '__main__':
             va='center')
 
 
-
     plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
 
-    plt.title(band + "-dropout, " + ID + "\_MC\_" + args.MC_draw)
+    plt.title(args.ID + "\_MC\_" + args.MC_draw + " " + XDF_ID)
 
-    name = os.path.join(folder, 
-            ID + "_MC_" + args.MC_draw + "_noiseless_snr_PS_CLEAR_PRISM.pdf")
+    plt.show()
 
-    fig.savefig(name, dpi=None, facecolor='w', edgecolor='w',
-            orientation='portrait', papertype='a4', format="pdf",
-            transparent=False, bbox_inches="tight", pad_inches=0.1)
+    if args.savefig:
+        name = os.path.join(args.folder, "MC_" + args.MC_draw, "ETC-simulations", "ETC-output",
+                args.ID + "_MC_" + args.MC_draw + "_noiseless_snr_PS_CLEAR_PRISM.pdf")
+
+        fig.savefig(name, dpi=None, facecolor='w', edgecolor='w',
+                orientation='portrait', papertype='a4', format="pdf",
+                transparent=False, bbox_inches="tight", pad_inches=0.1)
 
     plt.close(fig)
 
