@@ -393,6 +393,7 @@ if __name__ == '__main__':
     redshifts = hdulist['galaxy properties'].data['redshift']
 
     # If the args.effective_radius is a number, then use the same radius for all galaxies
+    r_eff = np.array((None,)*len(redshifts))
     if args.effective_radius is not None:
         try:
             r_eff = (float(args.effective_radius),)*len(redshifts)
