@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import os
 import numpy as np
 from astropy.io import fits
@@ -136,12 +138,22 @@ if __name__ == '__main__':
 
     m = MSAThroughput("/Users/jchevall/JWST/code/JWSTpytools-0.0.3/data/slit_losses", throughput_type="total")
 
+    wl = np.array([2.5])
+    sizes = (0.13, 0.10)
+    sersic = 1.5
+    print "wl/micron size/arcsec throughput"
+    for size in sizes:
+        throughput = m.get_throughput(wl=wl, Sersic=sersic, effective_radius=size)
+        print wl, size, throughput
+
+    quit()
+
     # Create table of slit losses at 4.5 micron for Emma
     dropout_bands = ('B', 'V', 'I', 'Z', 'Y')
     redshifts = (8, 4, 5, 6, 7, 8)
     sizes = (0.06, 0.10, 0.11, 0.12, 0.13, 0.145)
     sersic = 1.0
-    wl = np.array([0.6, 2.5,  5.3])
+    wl = np.array([0.6, 2.5, 5.3])
 
     print "redshift wl/micron size/arcsec throughput"
     for size, redshift in zip(sizes, redshifts):
