@@ -17,9 +17,9 @@ import itertools
 import matplotlib.pyplot as plt
 
 import sys
-sys.path.append(os.path.join(os.environ['PYP_BEAGLE'], "PyP-BEAGLE"))
-from beagle_utils import BeagleDirectories, extract_IDs
-import beagle_multiprocess
+#sys.path.append(os.path.join(os.environ['PYP_BEAGLE'], "PyP-BEAGLE"))
+from pyp_beagle import BeagleDirectories, extract_IDs
+#import beagle_multiprocess
 
 from pathos.multiprocessing import ProcessingPool 
 
@@ -134,6 +134,7 @@ def get_mode_rows(ID, param_names, param_indices, mode_index):
 def extract_data(ID, n_par, redshift_index, redshift_type=None):
 
     file_name = os.path.join(results_dir, str(ID) + "_BEAGLE_MNstats.dat")
+    print file_name, n_par
 
     if not os.path.isfile(file_name):
         return None
@@ -350,7 +351,7 @@ if __name__ == '__main__':
     inputData = Table.read(args.inputCat)
 
     # ID in the input catalogue
-    input_IDs = extract_IDs(inputData)
+    input_IDs = extract_IDs(inputData, key='id')
 
     # Read parameter file
     config = ConfigParser.SafeConfigParser()
@@ -363,47 +364,14 @@ if __name__ == '__main__':
 
     config.read(param_file)
 
-    file_name = os.path.expandvars(config.get('main', 'PHOTOMETRIC CATALOGUE'))
-    BeaglePhotCat = fits.open(file_name)[1].data
-
-    # ID in the photometric catalogue fitted by Beagle
-    Beagle_IDs = extract_IDs(BeaglePhotCat)
-
-    # Extract RA DEC of input catalogue
-    if args.input_coord[0] == "deg":
-        ra = Angle(np.array(inputData['RA']), unit=u.deg)
-    elif args.input_coord[0] == "hourangle":
-        ra = Angle(np.array(inputData['RA']), unit=u.hourangle)
-
-    if args.input_coord[1] == "deg":
-        dec = Angle(np.array(inputData['DEC']), unit=u.deg)
-    elif args.input_coord[1] == "hourangle":
-        dec = Angle(np.array(inputData['DEC']), unit=u.hourangle)
-
-    inputCoord = SkyCoord(ra=ra, dec=dec)  
-
-    # Extract RA DEC of catalogue used in Beagle run
-    if args.beagle_coord[0] == "deg":
-        ra = Angle(np.array(BeaglePhotCat['RA']), unit=u.deg)
-    elif args.beagle_coord[0] == "hourangle":
-        ra = Angle(np.array(BeaglePhotCat['RA']), unit=u.hourangle)
-
-    if args.beagle_coord[1] == "deg":
-        dec = Angle(np.array(BeaglePhotCat['DEC']), unit=u.deg)
-    elif args.beagle_coord[1] == "hourangle":
-        dec = Angle(np.array(BeaglePhotCat['DEC']), unit=u.hourangle)
-
-    BeagleCoord = SkyCoord(ra=ra, dec=dec)
-
     n_input = len(inputData.field(0))
     # Columns to be added to the catalogues
     param_names = ["redshift", "mass"]
 
     dictKeys = OrderedDict()
 
-    dictKeys["ID_input"] = {"type":"S15", "format":"s"}
-    dictKeys["ID_Beagle"] = {"type":"S15", "format":"s"}
-    dictKeys["distance"] = {"type":np.float32, "format":".3f"}
+    dictKeys["ID"] = {"type":"S15", "format":"s"}
+    #dictKeys["distance"] = {"type":np.float32, "format":".3f"}
 
     for name in param_names:
         for j in range(2):
@@ -428,12 +396,14 @@ if __name__ == '__main__':
         full_path = os.path.join(args.results_dir, file)
         if file.endswith(suffix) and os.path.getsize(full_path) > 0:
             with fits.open(full_path) as f:
-                n_par = len(f["POSTERIOR PDF"].data.dtype.names)-2
+                n_par = len(f["POSTERIOR PDF"].data.dtype.names)-4
+                #print n_par, f['POSTERIOR PDF'].data.dtype.names
                 
                 for name in param_names:
                     for i, col_name in enumerate(f["POSTERIOR PDF"].data.dtype.names):
                         if name == col_name:
-                            paramDict[name] = (i+1)-2
+                            print name
+                            paramDict[name] = (i+1)-4
                             break
 
 
@@ -452,21 +422,10 @@ if __name__ == '__main__':
         else:
             newCols[key] = np.full(n_input, -99, Type)
 
-    # Match RA DEC of input catalogue to RA DEC of catalogue used in Beagle run
-    idx, d2d, d3d = inputCoord.match_to_catalog_sky(BeagleCoord)  
-    mask = np.zeros(n_input, dtype=bool)
-    ok = np.where(d2d.arcsecond <= 0.2)[0]
     input_idx = range(n_input)
-    input_idx = np.array(input_idx)[ok]
 
-    match_ok = idx[ok]
-    n_ok = len(match_ok)
     # Put oriignal (input catalgoue) IDs in the output catalogue
-    newCols["ID_input"] = np.array(input_IDs)
-
-    # Put IDs and distances of matched objects
-    newCols["ID_Beagle"][ok] = np.array(Beagle_IDs[match_ok])
-    newCols["distance"][ok] = d2d.arcsecond[ok]
+    newCols["ID"] = np.array(input_IDs)
 
     #print "-------> ", get1DInterval(Beagle_IDs[match_ok[0]], param_names=param_names, levels=[68., 95., 99.7])
 
@@ -478,8 +437,8 @@ if __name__ == '__main__':
     data = list()
     if args.nproc <= 0:
 
-        for indx in match_ok:
-            ID = Beagle_IDs[indx]
+        for indx in range(len(input_IDs)):
+            ID = input_IDs[indx]
             d = extract_data(ID, 
                     n_par=n_par, 
                     redshift_index=paramDict["redshift"]
@@ -496,24 +455,24 @@ if __name__ == '__main__':
                 data_cred_region.append(c)
     
     # Otherwise you use pathos to run in parallel on multiple CPUs
-    else:
-
-        # Set number of parellel processes to use
-        pool = ProcessingPool(nodes=args.nproc)
-
-        # Launch the actual calculation on multiple processesors
-        data = pool.map(extract_data, 
-            Beagle_IDs[match_ok],
-            (n_par,)*n_ok,
-            (paramDict["redshift"],)*n_ok
-            )
-
-        if args.credible_regions is not None:
-            data_cred_region = pool.map(get1DInterval,
-                    Beagle_IDs[match_ok],
-                    (param_names,)*n_ok,
-                    (args.credible_regions,)*n_ok
-                    )
+#    else:
+#
+#        # Set number of parellel processes to use
+#        pool = ProcessingPool(nodes=args.nproc)
+#
+#        # Launch the actual calculation on multiple processesors
+#        data = pool.map(extract_data, 
+#            Beagle_IDs[match_ok],
+#            (n_par,)*n_ok,
+#            (paramDict["redshift"],)*n_ok
+#            )
+#
+#        if args.credible_regions is not None:
+#            data_cred_region = pool.map(get1DInterval,
+#                    Beagle_IDs[match_ok],
+#                    (param_names,)*n_ok,
+#                    (args.credible_regions,)*n_ok
+#                    )
 
     for i, indx in enumerate(input_idx):
 
@@ -559,7 +518,9 @@ if __name__ == '__main__':
 
 
     myCols = list()
+    print dictKeys.keys()
     for i, (key, col) in enumerate(newCols.iteritems()):
+        print key, col
         tmpCol = Column(col, name=key, dtype=dictKeys[key]["type"], format='%'+dictKeys[key]['format'])
         myCols.append(tmpCol)
 
