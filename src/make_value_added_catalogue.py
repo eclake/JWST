@@ -29,6 +29,50 @@ __logBase10of2 = 3.0102999566398119521373889472449302676818988146210854131042746
 
 results_dir = ""
 
+def IntegratedProbAboveZ(ID, zLim):
+
+   suffix = BeagleDirectories.suffix + '.fits.gz'
+
+   full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
+   if not os.path.isfile(full_path):
+       return None
+
+   probability = f['POSTERIOR PDF'].data['probability']
+   z = f['POSTERIOR PDF'].data['redshift']
+
+   sortIdx = np.argsort(z)
+
+   #This is edited from the PyP-BEAGLE beagle_summary_catalogue.py
+   #get1DInterval function
+   # ******************************************************************
+   # Here you must simply use `cumsum`, and not `cumtrapz` as in
+   # beagle_utils.prepare_violin_plot, since the output of MultiNest are a set
+   # of weights (which sum up to 1) associated to each set of parameters (the
+   # `p_j` of equation 9 of Feroz+2009), and not a probability density (as the
+   # MultiNest README would suggest).
+   # ******************************************************************
+   cumul_pdf = np.cumsum(probability[sortIdx])
+   cumul_pdf /= cumul_pdf[len(cumul_pdf)-1]
+   
+   #add to the redshift array if the zLimits chosen are outside the limits
+   #in redshift sampled
+   if z[0] > np.min(zLim):
+     z = np.concatenate(([np.min(zLim)],z),axis=0)
+     cumul_pdf = np.concatenate(([0.],cumul_pdf),axis=0)
+   if z[-1] < np.max(zLim):
+     z = np.concatenate((z,[np.max(zLim)]),axis=0)
+     cumul_pdf = np.concatenate((cumul_pdf,[1.]),axis=0)
+
+   # Get the interpolant of the cumulative probability
+   f_interp = interp1d(z[sortIdx], cumul_pdf)
+   
+   #We output the integrated probability that the object is above a given
+   #redshift value
+   p1 = f_interp(zLim)
+   pOut = 1.-p1
+
+   return pOut
+
 def RoundToSigFigs( x, sigfigs ):
     """
     Rounds the value(s) in x to the number of significant figures in sigfigs.
@@ -341,6 +385,15 @@ if __name__ == '__main__':
         dest="credible_regions"
     )
 
+    parser.add_argument(
+        '--zLim-probs',
+        help="List of redshifts above which to supply the integrated probability",
+        action="store",
+        type=float,
+        nargs='+',
+        dest="zLim"
+    )
+
 
     # Get parsed arguments
     args = parser.parse_args()
@@ -388,7 +441,12 @@ if __name__ == '__main__':
                 dictKeys[key] = {"type":np.float32, "format":".3f"}
                 key = name + "_" + str(region) + "_up"
                 dictKeys[key] = {"type":np.float32, "format":".3f"}
-    
+
+        if args.zLim is not None:
+            for zLim in args.zLim:
+                key = "redshift_p_gt_" + str(zLim)
+                dictKeys[key] = {"type":np.float32, "format":".3f"}
+
     paramDict = OrderedDict()
     # Determine number of free parameters by counting columns in Beagle output file
     suffix = BeagleDirectories.suffix + '.fits.gz'
@@ -433,8 +491,11 @@ if __name__ == '__main__':
     # If the user does not specify the number of processors to be used, assume that it is a serial job
     if args.credible_regions is not None:
         data_cred_region = list()
+    if args.zLim is not None:
+        data_zLim_probs = list()
 
     data = list()
+    zProb = list()
     if args.nproc <= 0:
 
         for indx in range(len(input_IDs)):
@@ -453,6 +514,13 @@ if __name__ == '__main__':
                         )
 
                 data_cred_region.append(c)
+
+            if args.zLim is not None:
+                p = IntegratedProbAboveZ(ID,
+                        levels=args.zLim
+                        )
+
+                data_zLim_probs.append(p)
     
     # Otherwise you use pathos to run in parallel on multiple CPUs
 #    else:
@@ -515,6 +583,13 @@ if __name__ == '__main__':
                         newCols[key][indx] = c[name]["regions"][str(region)][0]
                         key = name + "_" + str(region) + "_up"
                         newCols[key][indx] = c[name]["regions"][str(region)][1]
+                        
+          if args.zLim is not None:
+              p = data_zLim_probs[i]
+              if p is not None:
+                  for j,zLim in np.enumerate(args.zLim):
+                      key = "redshift_p_gt_" + str(zLim)
+                      newCols[key][indx] = p[j]
 
 
     myCols = list()
