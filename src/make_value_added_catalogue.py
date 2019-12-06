@@ -36,11 +36,14 @@ def IntegratedProbAboveZ(ID, zLim):
    full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
    if not os.path.isfile(full_path):
        return None
+   else:
+       f = fits.open(full_path)
 
    probability = f['POSTERIOR PDF'].data['probability']
    z = f['POSTERIOR PDF'].data['redshift']
 
    sortIdx = np.argsort(z)
+   z_sorted = z[sortIdx]
 
    #This is edited from the PyP-BEAGLE beagle_summary_catalogue.py
    #get1DInterval function
@@ -56,15 +59,15 @@ def IntegratedProbAboveZ(ID, zLim):
    
    #add to the redshift array if the zLimits chosen are outside the limits
    #in redshift sampled
-   if z[0] > np.min(zLim):
-     z = np.concatenate(([np.min(zLim)],z),axis=0)
+   if z_sorted[0] > np.min(zLim):
+     z_sorted = np.concatenate(([np.min(zLim)],z_sorted),axis=0)
      cumul_pdf = np.concatenate(([0.],cumul_pdf),axis=0)
-   if z[-1] < np.max(zLim):
-     z = np.concatenate((z,[np.max(zLim)]),axis=0)
+   if z_sorted[-1] < np.max(zLim):
+     z_sorted = np.concatenate((z_sorted,[np.max(zLim)]),axis=0)
      cumul_pdf = np.concatenate((cumul_pdf,[1.]),axis=0)
 
    # Get the interpolant of the cumulative probability
-   f_interp = interp1d(z[sortIdx], cumul_pdf)
+   f_interp = interp1d(z_sorted, cumul_pdf)
    
    #We output the integrated probability that the object is above a given
    #redshift value
@@ -283,6 +286,8 @@ def get1DInterval(ID, param_names, levels=[68., 95.]):
     full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
     if not os.path.isfile(full_path):
         return None
+    else:
+      f = fits.open(full_path)
 
     param_values = OrderedDict()
     with fits.open(full_path) as f:
@@ -517,7 +522,7 @@ if __name__ == '__main__':
 
             if args.zLim is not None:
                 p = IntegratedProbAboveZ(ID,
-                        levels=args.zLim
+                        args.zLim
                         )
 
                 data_zLim_probs.append(p)
@@ -584,12 +589,12 @@ if __name__ == '__main__':
                         key = name + "_" + str(region) + "_up"
                         newCols[key][indx] = c[name]["regions"][str(region)][1]
                         
-          if args.zLim is not None:
-              p = data_zLim_probs[i]
-              if p is not None:
-                  for j,zLim in np.enumerate(args.zLim):
-                      key = "redshift_p_gt_" + str(zLim)
-                      newCols[key][indx] = p[j]
+        if args.zLim is not None:
+            p = data_zLim_probs[i]
+            if p is not None:
+                for j,zLim in enumerate(args.zLim):
+                    key = "redshift_p_gt_" + str(zLim)
+                    newCols[key][indx] = p[j]
 
 
     myCols = list()
