@@ -76,6 +76,20 @@ def IntegratedProbAboveZ(ID, zLim):
 
    return pOut
 
+def avg_last_10_chi2(ID):
+   #Sorry, not the most efficient to have to open the file again
+   suffix = BeagleDirectories.suffix + '.fits.gz'
+
+   full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
+   if not os.path.isfile(full_path):
+       return None
+   else:
+       f = fits.open(full_path)
+
+   c = f['POSTERIOR PDF'].data['chi_square']
+   return np.mean(c[-10:])
+
+
 def RoundToSigFigs( x, sigfigs ):
     """
     Rounds the value(s) in x to the number of significant figures in sigfigs.
@@ -399,6 +413,14 @@ if __name__ == '__main__':
         dest="zLim"
     )
 
+    parser.add_argument(
+        '--chi2',
+        help="add average of chi2 of last 10 samples?  Not the best metric but useful for comparing to minimum chi2 based codes",
+        action="store_true",
+        default=False,
+        dest="chi2"
+    )
+
 
     # Get parsed arguments
     args = parser.parse_args()
@@ -409,7 +431,7 @@ if __name__ == '__main__':
     inputData = Table.read(args.inputCat)
 
     # ID in the input catalogue
-    input_IDs = extract_IDs(inputData, key='id')
+    input_IDs = extract_IDs(inputData, key='ID')
 
     # Read parameter file
     config = ConfigParser.SafeConfigParser()
@@ -451,6 +473,10 @@ if __name__ == '__main__':
             for zLim in args.zLim:
                 key = "redshift_p_gt_" + str(zLim)
                 dictKeys[key] = {"type":np.float32, "format":".3f"}
+      
+        if args.chi2 is not None:
+            key = "chi2"
+            dictKeys[key] = {"type":np.float32, "format":".3f"}
 
     paramDict = OrderedDict()
     # Determine number of free parameters by counting columns in Beagle output file
@@ -501,9 +527,11 @@ if __name__ == '__main__':
 
     data = list()
     zProb = list()
+    chi2 = list()
     if args.nproc <= 0:
 
         for indx in range(len(input_IDs)):
+            print input_IDs[indx]
             ID = input_IDs[indx]
             d = extract_data(ID, 
                     n_par=n_par, 
@@ -526,26 +554,30 @@ if __name__ == '__main__':
                         )
 
                 data_zLim_probs.append(p)
-    
-    # Otherwise you use pathos to run in parallel on multiple CPUs
-#    else:
-#
-#        # Set number of parellel processes to use
-#        pool = ProcessingPool(nodes=args.nproc)
-#
-#        # Launch the actual calculation on multiple processesors
-#        data = pool.map(extract_data, 
-#            Beagle_IDs[match_ok],
-#            (n_par,)*n_ok,
-#            (paramDict["redshift"],)*n_ok
-#            )
-#
-#        if args.credible_regions is not None:
-#            data_cred_region = pool.map(get1DInterval,
-#                    Beagle_IDs[match_ok],
-#                    (param_names,)*n_ok,
-#                    (args.credible_regions,)*n_ok
-#                    )
+
+            if args.chi2 is not None:
+                c = avg_last_10_chi2(ID)
+                chi2.append(c)
+        
+        # Otherwise you use pathos to run in parallel on multiple CPUs
+    #    else:
+    #
+    #        # Set number of parellel processes to use
+    #        pool = ProcessingPool(nodes=args.nproc)
+    #
+    #        # Launch the actual calculation on multiple processesors
+    #        data = pool.map(extract_data, 
+    #            Beagle_IDs[match_ok],
+    #            (n_par,)*n_ok,
+    #            (paramDict["redshift"],)*n_ok
+    #            )
+    #
+    #        if args.credible_regions is not None:
+    #            data_cred_region = pool.map(get1DInterval,
+    #                    Beagle_IDs[match_ok],
+    #                    (param_names,)*n_ok,
+    #                    (args.credible_regions,)*n_ok
+    #                    )
 
     for i, indx in enumerate(input_idx):
 
@@ -578,7 +610,7 @@ if __name__ == '__main__':
                 newCols["KF_flag"][indx] = 2
             else:
                 newCols["KF_flag"][indx] = 3
-    
+        
         if args.credible_regions is not None:
             c = data_cred_region[i]
             if c is not None:
@@ -588,13 +620,17 @@ if __name__ == '__main__':
                         newCols[key][indx] = c[name]["regions"][str(region)][0]
                         key = name + "_" + str(region) + "_up"
                         newCols[key][indx] = c[name]["regions"][str(region)][1]
-                        
+                
         if args.zLim is not None:
             p = data_zLim_probs[i]
             if p is not None:
                 for j,zLim in enumerate(args.zLim):
                     key = "redshift_p_gt_" + str(zLim)
                     newCols[key][indx] = p[j]
+
+        if args.chi2 is not None:
+            c = chi2[i]
+            newCols[key][indx] = c
 
 
     myCols = list()
