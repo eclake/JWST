@@ -299,10 +299,10 @@ def get1DInterval(ID, param_names, levels=[68., 95.]):
 
     full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
     if not os.path.isfile(full_path):
-        return None
+        return None,1
     else:
       f = fits.open(full_path)
-
+    
     param_values = OrderedDict()
     with fits.open(full_path) as f:
         probability = f['POSTERIOR PDF'].data['probability']
@@ -310,6 +310,8 @@ def get1DInterval(ID, param_names, levels=[68., 95.]):
             param_values[name] = f['POSTERIOR PDF'].data[name]
 
     output = OrderedDict()
+    samplerFlag = 0 #This will be set to 1 if any of the limits are 
+                    #beyond the probability sampled by multinest
     for key, value in param_values.iteritems():
 
         sort_ = np.argsort(value)
@@ -327,13 +329,20 @@ def get1DInterval(ID, param_names, levels=[68., 95.]):
 
         interval = OrderedDict()
         for lev in levels:
-
-            low, high = f_interp([0.5*(1.-lev/100.), 1.-0.5*(1.-lev/100.)])
+            lower_lev = 0.5*(1.-lev/100.)
+            upper_lev = 1.-0.5*(1.-lev/100.)
+            #check if either limit is lower or higher than current samples
+            if lower_lev < cumul_pdf[0]:
+              lower_lev = cumul_pdf[0]
+              samplerFlag = 1
+            if upper_lev > cumul_pdf[-1]:
+              upper_lev = cumul_pdf[-1]
+              samplerFlag = 1
+            low, high = f_interp([lower_lev, upper_lev])
             interval[str(lev)] = np.array([low,high])
 
         output[key] = {'mean':mean, 'median':median, 'regions':interval}
-
-    return output
+    return output,samplerFlag
 
 if __name__ == '__main__':
 
@@ -522,6 +531,7 @@ if __name__ == '__main__':
     # If the user does not specify the number of processors to be used, assume that it is a serial job
     if args.credible_regions is not None:
         data_cred_region = list()
+        cred_region_flag = list()
     if args.zLim is not None:
         data_zLim_probs = list()
 
@@ -541,12 +551,14 @@ if __name__ == '__main__':
             data.append(d)
 
             if args.credible_regions is not None:
-                c = get1DInterval(ID, 
+                print args.credible_regions
+                c,flag = get1DInterval(ID, 
                         param_names=param_names, 
                         levels=args.credible_regions
                         )
 
                 data_cred_region.append(c)
+                cred_region_flag.append(flag)
 
             if args.zLim is not None:
                 p = IntegratedProbAboveZ(ID,
@@ -613,6 +625,7 @@ if __name__ == '__main__':
         
         if args.credible_regions is not None:
             c = data_cred_region[i]
+            flag = cred_region_flag[i]
             if c is not None:
                 for name in param_names:
                     for region in args.credible_regions:
@@ -620,6 +633,7 @@ if __name__ == '__main__':
                         newCols[key][indx] = c[name]["regions"][str(region)][0]
                         key = name + "_" + str(region) + "_up"
                         newCols[key][indx] = c[name]["regions"][str(region)][1]
+                newCols['cred_region_flag'][indx] = flag
                 
         if args.zLim is not None:
             p = data_zLim_probs[i]
