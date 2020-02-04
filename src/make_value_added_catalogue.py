@@ -510,6 +510,7 @@ if __name__ == '__main__':
     dictKeys["deltaEvidence"] = {"type":np.float32, "format":".2f"}
     dictKeys["KF_flag"] = {"type":np.int, "format":"1d"}
     dictKeys["P1/P2"] = {"type":np.float32, "format":".3e"}
+    dictKeys["cred_region_flag"] = {"type":np.int, "format":"1d"}
 
     newCols = OrderedDict()
 
