@@ -645,7 +645,7 @@ if __name__ == '__main__':
 
         if args.chi2 is not None:
             c = chi2[i]
-            newCols[key][indx] = c
+            newCols['chi2'][indx] = c
 
 
     myCols = list()
