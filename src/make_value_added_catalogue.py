@@ -39,7 +39,6 @@ def IntegratedProbAboveZ(ID, zLim, rows=None, plot=False):
    else:
        f = fits.open(full_path)
 
-   print rows
    if rows is None:
       rows = np.fromiter((x for x in range(len(f['POSTERIOR PDF'].data['probability']))),np.int)
    probability = f['POSTERIOR PDF'].data['probability'][rows]
@@ -667,12 +666,10 @@ if __name__ == '__main__':
             if args.chi2 or args.qFlag:
                 chi2Modes = {}
                 c = min_chi2(ID)
-                print c
                 chi2Modes["mean"] = (c)
                 
             #And split information by mode
             if data[-1] is not None:
-                print data[-1]
 #                sys.exit()
                 if args.Mstar:
                     mStarModes = {}
@@ -701,8 +698,8 @@ if __name__ == '__main__':
                         c = min_chi2(ID, rows=rows)
                         chi2Modes[k] = c
                     if args.qFlag:
-                        p_dz_02 = IntegratedProbAboveZ(ID, data[-1][k]["posterior_mean"][paramDict["redshift"]-1]-0.2, rows=rows) - \
-                                     IntegratedProbAboveZ(ID, data[-1][k]["posterior_mean"][paramDict["redshift"]-1]+0.2, rows=rows)
+                        p_dz_02 = IntegratedProbAboveZ(ID, data[-1][k]["posterior_mean"][paramDict["redshift"]-1]-0.2) - \
+                                     IntegratedProbAboveZ(ID, data[-1][k]["posterior_mean"][paramDict["redshift"]-1]+0.2)
                         temp,flags = get1DInterval(ID, param_names=["redshift"], levels=[99.], rows=rows)
                         z99up_low = temp["redshift"]["regions"][str(99.)][1] - temp["redshift"]["regions"][str(99.)][0]
                         qModes[k] = (chi2Modes[k]/args.nFilt) * z99up_low/p_dz_02
