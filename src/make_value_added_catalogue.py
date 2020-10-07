@@ -29,7 +29,7 @@ __logBase10of2 = 3.0102999566398119521373889472449302676818988146210854131042746
 
 results_dir = ""
 
-def IntegratedProbAboveZ(ID, zLim):
+def IntegratedProbAboveZ(ID, zLim, rows=None, plot=False):
 
    suffix = BeagleDirectories.suffix + '.fits.gz'
 
@@ -39,8 +39,11 @@ def IntegratedProbAboveZ(ID, zLim):
    else:
        f = fits.open(full_path)
 
-   probability = f['POSTERIOR PDF'].data['probability']
-   z = f['POSTERIOR PDF'].data['redshift']
+   print rows
+   if rows is None:
+      rows = np.fromiter((x for x in range(len(f['POSTERIOR PDF'].data['probability']))),np.int)
+   probability = f['POSTERIOR PDF'].data['probability'][rows]
+   z = f['POSTERIOR PDF'].data['redshift'][rows]
 
    sortIdx = np.argsort(z)
    z_sorted = z[sortIdx]
@@ -56,6 +59,10 @@ def IntegratedProbAboveZ(ID, zLim):
    # ******************************************************************
    cumul_pdf = np.cumsum(probability[sortIdx])
    cumul_pdf /= cumul_pdf[len(cumul_pdf)-1]
+   if plot:
+       plt.figure()
+       plt.plot(z_sorted, cumul_pdf)
+       plt.show()
    
    #add to the redshift array if the zLimits chosen are outside the limits
    #in redshift sampled
@@ -76,7 +83,7 @@ def IntegratedProbAboveZ(ID, zLim):
 
    return pOut
 
-def avg_last_10_chi2(ID):
+def min_chi2(ID, rows=None):
    #Sorry, not the most efficient to have to open the file again
    suffix = BeagleDirectories.suffix + '.fits.gz'
 
@@ -86,8 +93,10 @@ def avg_last_10_chi2(ID):
    else:
        f = fits.open(full_path)
 
-   c = f['POSTERIOR PDF'].data['chi_square']
-   return np.mean(c[-10:])
+   if rows is None:
+      rows = np.fromiter((x for x in range(len(f['POSTERIOR PDF'].data['chi_square']))),np.int)
+   c = f['POSTERIOR PDF'].data['chi_square'][rows]
+   return np.min(c)
 
 
 def RoundToSigFigs( x, sigfigs ):
@@ -125,9 +134,9 @@ def find_nearest(array,value):
         dist = np.abs(value-array[idx])
         return idx, dist
 
-def get_mode_rows(ID, param_names, param_indices, mode_index):
+def get_mode_rows(ID, results_dir, param_names, param_indices, mode_index):
 
-    file_name = os.path.join(ID + "_BEAGLE_MNpost_separate.dat")
+    file_name = os.path.join(results_dir + np.str(ID) + "_BEAGLE_MNpost_separate.dat")
 
     n_empty = 0
     prev_is_empty = False
@@ -160,7 +169,7 @@ def get_mode_rows(ID, param_names, param_indices, mode_index):
     tree = spatial.cKDTree(np_values)
 
 
-    file_name = os.path.join(results_dir, ID + "_BEAGLE.fits.gz")
+    file_name = os.path.join(results_dir, np.str(ID) + "_BEAGLE.fits.gz")
 
     hdulist = fits.open(file_name)
     n = len(hdulist['POSTERIOR PDF'].data['probability'])
@@ -185,6 +194,9 @@ def get_mode_rows(ID, param_names, param_indices, mode_index):
     #plt.show()
     #pause    
 
+    #Emma comment - I believe this is matching the rows in the
+    #separate mode file to entries in the posterior output
+    #extension.
     loc = np.where(distances <= max_distance)[0]
     rows = full_indx[loc]
 
@@ -195,7 +207,6 @@ def get_mode_rows(ID, param_names, param_indices, mode_index):
 def extract_data(ID, n_par, redshift_index, redshift_type=None):
 
     file_name = os.path.join(results_dir, str(ID) + "_BEAGLE_MNstats.dat")
-    print file_name, n_par
 
     if not os.path.isfile(file_name):
         return None
@@ -293,7 +304,7 @@ def extract_data(ID, n_par, redshift_index, redshift_type=None):
 
     return outData
 
-def get1DInterval(ID, param_names, levels=[68., 95.]):
+def get1DInterval(ID, param_names, levels=[68., 95.], rows=None):
 
     suffix = BeagleDirectories.suffix + '.fits.gz'
 
@@ -305,9 +316,15 @@ def get1DInterval(ID, param_names, levels=[68., 95.]):
     
     param_values = OrderedDict()
     with fits.open(full_path) as f:
-        probability = f['POSTERIOR PDF'].data['probability']
+        if rows is None:
+            rows = np.fromiter((x for x in range(len(f['POSTERIOR PDF'].data['probability']))),np.int)
+        
+        probability = f['POSTERIOR PDF'].data['probability'][rows]
         for name in param_names:
-            param_values[name] = f['POSTERIOR PDF'].data[name]
+            if name == 'Mstar':
+                param_values[name] = np.log10(f['GALAXY PROPERTIES'].data['M_star'][rows])
+            else:
+                param_values[name] = f['POSTERIOR PDF'].data[name][rows]
 
     output = OrderedDict()
     samplerFlag = 0 #This will be set to 1 if any of the limits are 
@@ -430,6 +447,44 @@ if __name__ == '__main__':
         dest="chi2"
     )
 
+    parser.add_argument(
+        '--m-star',
+        help="include Mstar in output",
+        action="store_true",
+        default=False,
+        dest="Mstar"
+    )
+
+    parser.add_argument(
+        '--q-flag',
+        help="add EAZY style q-flag in output - requires credible intervals with a level of 99",
+        action="store_true",
+        default=False,
+        dest="qFlag"
+    )
+
+    parser.add_argument(
+        '--n-filt',
+        help="number of filters, required for the reduced chi2 in the quality flag",
+        action="store",
+        type=int,
+        default=9,
+        dest="nFilt"
+    )
+
+#    if args.qFlag: #We need the upper an lower limits of the 99% credible interval
+#        if args.credible_regions is not None:
+#            print args.credible_regions
+#            #check if level 99 is included and add it if not
+#            present = False
+#            for i in range(len(args.credible_regions)):
+#                if args.credible_regions[i] == 99.:
+#                    present = True
+#            if not present:
+#                args.credible_regions.append(99)
+#        else:
+#            args.credible_regions = [99.]
+    
 
     # Get parsed arguments
     args = parser.parse_args()
@@ -459,10 +514,14 @@ if __name__ == '__main__':
 
     dictKeys = OrderedDict()
 
+#-------- Setting up the column names and types --------------
+
     dictKeys["ID"] = {"type":"S15", "format":"s"}
     #dictKeys["distance"] = {"type":np.float32, "format":".3f"}
 
     for name in param_names:
+        key = name+"_beagle_mean"
+        dictKeys[key] = {"type":np.float32, "format":".3f"}
         for j in range(2):
             suff = str(j+1)
             key = name+"_beagle_"+suff
@@ -473,19 +532,54 @@ if __name__ == '__main__':
 
         if args.credible_regions is not None:
             for region in args.credible_regions:
-                key = name + "_" + str(region) + "_low"
+                key = name + "_" + str(np.rint(region)) + "_low"
                 dictKeys[key] = {"type":np.float32, "format":".3f"}
-                key = name + "_" + str(region) + "_up"
+                key = name + "_" + str(np.rint(region)) + "_up"
                 dictKeys[key] = {"type":np.float32, "format":".3f"}
 
-        if args.zLim is not None:
-            for zLim in args.zLim:
-                key = "redshift_p_gt_" + str(zLim)
-                dictKeys[key] = {"type":np.float32, "format":".3f"}
-      
-        if args.chi2 is not None:
-            key = "chi2"
+    if args.zLim is not None:
+        for zLim in args.zLim:
+            key = "redshift_p_gt_" + str(zLim)
             dictKeys[key] = {"type":np.float32, "format":".3f"}
+  
+    if args.chi2 is not None:
+        key = "chi2"
+        dictKeys[key] = {"type":np.float32, "format":".3f"}
+            
+    if args.Mstar:
+        # We add the modal mean Mstar values as well as the total average and credible intervals
+        name = "Mstar"
+        for j in range(2):
+            suff = str(j+1)
+            key = name+"_beagle_"+suff
+            dictKeys[key] = {"type":np.float32, "format":".3f"}
+        if args.credible_regions is not None:
+            key = name + "_beagle_mean"
+            dictKeys[key] = {"type":np.float32, "format":".3f"}
+            for region in args.credible_regions:
+                key = name + "_" + str(np.rint(region)) + "_low"
+                dictKeys[key] = {"type":np.float32, "format":".3f"}
+                key = name + "_" + str(np.rint(region)) + "_up"
+                dictKeys[key] = {"type":np.float32, "format":".3f"}
+                
+    if args.qFlag:
+        #We add a quality flag for the main average redshift as well as for each mode
+        dictKeys["q_beagle"] = {"type":np.float32, "format":".3f"}
+        for j in range(2):
+            suff = str(j+1)
+            dictKeys["q_beagle_"+suff] = {"type":np.float32, "format":".3f"}
+#
+#            key = name+"_beagle_err_"+suff
+#            dictKeys[key] = {"type":np.float32, "format":".3f"}
+            
+            
+#            key = "chi2"
+#            dictKeys[key] = {"type":np.float32, "format":".3f"}
+#            dictKeys["q_beagle"] = {"type":np.float32, "format":".3f"}
+#            for j in range(2):
+#                suff = str(j+1)
+#                key = "q_beagle_"+suff
+#                dictKeys[key] = {"type":np.float32, "format":".3f"}
 
     paramDict = OrderedDict()
     # Determine number of free parameters by counting columns in Beagle output file
@@ -500,7 +594,6 @@ if __name__ == '__main__':
                 for name in param_names:
                     for i, col_name in enumerate(f["POSTERIOR PDF"].data.dtype.names):
                         if name == col_name:
-                            print name
                             paramDict[name] = (i+1)-4
                             break
 
@@ -535,6 +628,11 @@ if __name__ == '__main__':
         cred_region_flag = list()
     if args.zLim is not None:
         data_zLim_probs = list()
+    if args.Mstar is not None:
+        mStar = list()
+    if args.qFlag is not None:
+        p_dz_02 = list()
+        qFlag = list()
 
     data = list()
     zProb = list()
@@ -542,17 +640,15 @@ if __name__ == '__main__':
     if args.nproc <= 0:
 
         for indx in range(len(input_IDs)):
-            print input_IDs[indx]
+#        for indx in [3783]:
             ID = input_IDs[indx]
             d = extract_data(ID, 
                     n_par=n_par, 
                     redshift_index=paramDict["redshift"]
                     )
-
             data.append(d)
 
             if args.credible_regions is not None:
-                print args.credible_regions
                 c,flag = get1DInterval(ID, 
                         param_names=param_names, 
                         levels=args.credible_regions
@@ -568,9 +664,65 @@ if __name__ == '__main__':
 
                 data_zLim_probs.append(p)
 
-            if args.chi2 is not None:
-                c = avg_last_10_chi2(ID)
-                chi2.append(c)
+            if args.chi2 or args.qFlag:
+                chi2Modes = {}
+                c = min_chi2(ID)
+                print c
+                chi2Modes["mean"] = (c)
+                
+            #And split information by mode
+            if data[-1] is not None:
+                print data[-1]
+#                sys.exit()
+                if args.Mstar:
+                    mStarModes = {}
+                    m,flag = get1DInterval(ID,
+                              param_names=['Mstar'],
+                              levels=args.credible_regions)
+                    mStarModes["mean"] = m
+                if args.qFlag:
+                    qModes = {}
+                    p_dz_02 = IntegratedProbAboveZ(ID, data_cred_region[-1]["redshift"]["mean"]-0.2) - \
+                              IntegratedProbAboveZ(ID, data_cred_region[-1]["redshift"]["mean"]+0.2)
+                    temp,flags = get1DInterval(ID, param_names=["redshift"], levels=[99.])
+                    z99up_low = temp["redshift"]["regions"][str(99.)][1] - temp["redshift"]["regions"][str(99.)][0]
+                    qModes["mean"] = (chi2Modes["mean"]/args.nFilt) * z99up_low/p_dz_02
+                    
+                for k in data[-1].keys():
+                    mode_index = k.split('_')[1]
+                    rows = get_mode_rows(ID, args.results_dir, param_names=["mass","redshift"], param_indices=[1,2], mode_index=mode_index)
+                    if args.Mstar:
+                        m,flag = get1DInterval(ID,
+                                 param_names=['Mstar'],
+                                 levels=args.credible_regions,
+                                 rows=rows)
+                        mStarModes[k] = m
+                    if args.chi2 or args.qFlag:
+                        c = min_chi2(ID, rows=rows)
+                        chi2Modes[k] = c
+                    if args.qFlag:
+                        p_dz_02 = IntegratedProbAboveZ(ID, data[-1][k]["posterior_mean"][paramDict["redshift"]-1]-0.2, rows=rows) - \
+                                     IntegratedProbAboveZ(ID, data[-1][k]["posterior_mean"][paramDict["redshift"]-1]+0.2, rows=rows)
+                        temp,flags = get1DInterval(ID, param_names=["redshift"], levels=[99.], rows=rows)
+                        z99up_low = temp["redshift"]["regions"][str(99.)][1] - temp["redshift"]["regions"][str(99.)][0]
+                        qModes[k] = (chi2Modes[k]/args.nFilt) * z99up_low/p_dz_02
+#                        sys.exit()
+                        
+                if args.Mstar:
+                    mStar.append(mStarModes)
+                if args.chi2:
+                    chi2.append(chi2Modes)
+                if args.qFlag:
+                    qFlag.append(qModes)
+            
+            else:
+                if args.Mstar:
+                    mStar.append(None)
+                if args.chi2:
+                    chi2.append(None)
+                if args.qFlag:
+                    qFlag.append(None)
+                    
         
         # Otherwise you use pathos to run in parallel on multiple CPUs
     #    else:
@@ -595,16 +747,23 @@ if __name__ == '__main__':
     for i, indx in enumerate(input_idx):
 
         d = data[i]
+#        if d is not None:
+#            print 'd: ', d
 
         if d is None:
             continue
 
         for j, (key, value) in enumerate(d.iteritems()):
-
+            suff = str(j+1)
             for name, row_index in paramDict.iteritems():
-                suff = str(j+1)
                 newCols[name+"_beagle_"+suff][indx] = value["posterior_mean"][row_index-1]
                 newCols[name+"_beagle_err_"+suff][indx] = value["posterior_sigma"][row_index-1]
+            
+            if args.Mstar:
+                newCols["Mstar_beagle_"+suff][indx] = mStar[i][key]["Mstar"]["mean"]
+                
+            if args.qFlag:
+                newCols["q_beagle_"+suff][indx] = qFlag[i][key]
 
             if j == 0:
                 deltaEvidence = value["evidence"]
@@ -629,12 +788,23 @@ if __name__ == '__main__':
             flag = cred_region_flag[i]
             if c is not None:
                 for name in param_names:
+                    key = name+"_beagle_mean"
+                    newCols[key][indx] = c[name]["mean"]
                     for region in args.credible_regions:
-                        key = name + "_" + str(region) + "_low"
+                        key = name + "_" + str(np.rint(region)) + "_low"
                         newCols[key][indx] = c[name]["regions"][str(region)][0]
-                        key = name + "_" + str(region) + "_up"
+                        key = name + "_" + str(np.rint(region)) + "_up"
                         newCols[key][indx] = c[name]["regions"][str(region)][1]
                 newCols['cred_region_flag'][indx] = flag
+            if args.Mstar:
+                m = mStar[i]
+                key = "Mstar_beagle_mean"
+                newCols[key][indx] = m["mean"]["Mstar"]["mean"]
+                for region in args.credible_regions:
+                    key = "Mstar_"+str(np.rint(region))+"_low"
+                    newCols[key][indx] = m["mean"]["Mstar"]["regions"][str(region)][0]
+                    key = "Mstar_"+str(np.rint(region)) + "_up"
+                    newCols[key][indx] = m["mean"]["Mstar"]["regions"][str(region)][1]
                 
         if args.zLim is not None:
             p = data_zLim_probs[i]
@@ -643,15 +813,18 @@ if __name__ == '__main__':
                     key = "redshift_p_gt_" + str(zLim)
                     newCols[key][indx] = p[j]
 
-        if args.chi2 is not None:
+        if args.chi2:
             c = chi2[i]
-            newCols['chi2'][indx] = c
+            newCols["chi2"][indx] = c["mean"]
+            
+        if args.qFlag:
+            newCols["q_beagle"][indx] = qFlag[i]["mean"]
+            
+            
 
 
     myCols = list()
-    print dictKeys.keys()
     for i, (key, col) in enumerate(newCols.iteritems()):
-        print key, col
         tmpCol = Column(col, name=key, dtype=dictKeys[key]["type"], format='%'+dictKeys[key]['format'])
         myCols.append(tmpCol)
 
