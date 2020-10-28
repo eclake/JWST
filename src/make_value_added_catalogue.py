@@ -15,6 +15,7 @@ from scipy.interpolate import interp1d
 from collections import defaultdict
 import itertools
 import matplotlib.pyplot as plt
+import time
 
 import sys
 #sys.path.append(os.path.join(os.environ['PYP_BEAGLE'], "PyP-BEAGLE"))
@@ -29,21 +30,49 @@ __logBase10of2 = 3.0102999566398119521373889472449302676818988146210854131042746
 
 results_dir = ""
 
-def IntegratedProbAboveZ(ID, zLim, rows=None, plot=False):
-
-   suffix = BeagleDirectories.suffix + '.fits.gz'
-
+def ReadInfoFromFitsFiles(ID):
+   #Read in all the relevant information from the fits file once to pass to other functions
+   #Make into the data format read in usually by astropy.io.fits so that the data is accessed the same way
    full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
+   data = []
    if not os.path.isfile(full_path):
-       return None
+      return None
    else:
-       f = fits.open(full_path)
+      with fits.open(full_path) as f:
+         posteriorCols = []
+         for col in f['POSTERIOR PDF'].data.dtype.names:
+            posteriorCols.append(fits.Column(name=col,array=f['POSTERIOR PDF'].data[col], format='D'))
+         posteriorHdu = fits.BinTableHDU.from_columns(posteriorCols)
+         posteriorHdu.header['EXTNAME'] = 'POSTERIOR PDF'
+         propertyCols = [fits.Column(name='M_star',array=f['GALAXY PROPERTIES'].data['M_star'],format='D')]
+         propertyHdu = fits.BinTableHDU.from_columns(propertyCols)
+         propertyHdu.header['EXTNAME'] = 'GALAXY PROPERTIES'
+         primaryHdu = fits.PrimaryHDU()
+         data = fits.HDUList([primaryHdu,propertyHdu,posteriorHdu])
+        
+   return data
+    
 
+def IntegratedProbAboveZ(ID, zLim, rows=None, plot=False, f=None):
+
+   openFile=False
+   if f is None: #read in the information from file
+      suffix = BeagleDirectories.suffix + '.fits.gz'
+
+      full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
+      if not os.path.isfile(full_path):
+         return None
+      else:
+         f = fits.open(full_path)
+         openFile = True
    if rows is None:
       rows = np.fromiter((x for x in range(len(f['POSTERIOR PDF'].data['probability']))),np.int)
    probability = f['POSTERIOR PDF'].data['probability'][rows]
    z = f['POSTERIOR PDF'].data['redshift'][rows]
-
+   
+   if openFile:
+      f.close()
+      
    sortIdx = np.argsort(z)
    z_sorted = z[sortIdx]
 
@@ -82,19 +111,27 @@ def IntegratedProbAboveZ(ID, zLim, rows=None, plot=False):
 
    return pOut
 
-def min_chi2(ID, rows=None):
-   #Sorry, not the most efficient to have to open the file again
-   suffix = BeagleDirectories.suffix + '.fits.gz'
+def min_chi2(ID, rows=None, f=None):
 
-   full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
-   if not os.path.isfile(full_path):
-       return None
-   else:
-       f = fits.open(full_path)
+   openFile=False
+   if f is None:
+      #Sorry, not the most efficient to have to open the file again
+      suffix = BeagleDirectories.suffix + '.fits.gz'
+
+      full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
+      if not os.path.isfile(full_path):
+          return None
+      else:
+          f = fits.open(full_path)
+          openFile = True
 
    if rows is None:
       rows = np.fromiter((x for x in range(len(f['POSTERIOR PDF'].data['chi_square']))),np.int)
    c = f['POSTERIOR PDF'].data['chi_square'][rows]
+   
+   if openFile:
+      f.close()
+      
    return np.min(c)
 
 
@@ -133,7 +170,7 @@ def find_nearest(array,value):
         dist = np.abs(value-array[idx])
         return idx, dist
 
-def get_mode_rows(ID, results_dir, param_names, param_indices, mode_index):
+def get_mode_rows(ID, results_dir, param_names, param_indices, mode_index, hdulist=None):
 
     file_name = os.path.join(results_dir + np.str(ID) + "_BEAGLE_MNpost_separate.dat")
 
@@ -167,10 +204,18 @@ def get_mode_rows(ID, results_dir, param_names, param_indices, mode_index):
 
     tree = spatial.cKDTree(np_values)
 
+    openFile=False
+    if hdulist is None:
+       #Sorry, not the most efficient to have to open the file again
+       suffix = BeagleDirectories.suffix + '.fits.gz'
 
-    file_name = os.path.join(results_dir, np.str(ID) + "_BEAGLE.fits.gz")
-
-    hdulist = fits.open(file_name)
+       full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
+       if not os.path.isfile(full_path):
+           return None
+       else:
+           hdulist = fits.open(full_path)
+           openFile=True
+           
     n = len(hdulist['POSTERIOR PDF'].data['probability'])
     full_values = np.zeros([n, n_par])
     for i, name in enumerate(param_names):
@@ -199,7 +244,8 @@ def get_mode_rows(ID, results_dir, param_names, param_indices, mode_index):
     loc = np.where(distances <= max_distance)[0]
     rows = full_indx[loc]
 
-    hdulist.close()
+    if openFile:
+       hdulist.close()
 
     return rows
     
@@ -303,61 +349,76 @@ def extract_data(ID, n_par, redshift_index, redshift_type=None):
 
     return outData
 
-def get1DInterval(ID, param_names, levels=[68., 95.], rows=None):
+def get1DInterval(ID, param_names, levels=[68., 95.], rows=None, f=None):
 
-    suffix = BeagleDirectories.suffix + '.fits.gz'
+    #Check if there are actually any rows in the mode and return -99 if not
+    if rows is not None:
+        if len(rows) < 10:
+            
+    
+    openFile=False
+    if f is None:
+        #Sorry, not the most efficient to have to open the file again
+        suffix = BeagleDirectories.suffix + '.fits.gz'
 
-    full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
-    if not os.path.isfile(full_path):
-        return None,1
-    else:
-      f = fits.open(full_path)
+        full_path = os.path.join(args.results_dir, str(ID)+'_'+suffix)
+        if not os.path.isfile(full_path):
+            return None,1
+        else:
+            f = fits.open(full_path)
+            openFile=True
     
     param_values = OrderedDict()
-    with fits.open(full_path) as f:
-        if rows is None:
-            rows = np.fromiter((x for x in range(len(f['POSTERIOR PDF'].data['probability']))),np.int)
+    if rows is None:
+        rows = np.fromiter((x for x in range(len(f['POSTERIOR PDF'].data['probability']))),np.int)
         
-        probability = f['POSTERIOR PDF'].data['probability'][rows]
-        for name in param_names:
-            if name == 'Mstar':
-                param_values[name] = np.log10(f['GALAXY PROPERTIES'].data['M_star'][rows])
-            else:
-                param_values[name] = f['POSTERIOR PDF'].data[name][rows]
+    probability = f['POSTERIOR PDF'].data['probability'][rows]
+    for name in param_names:
+        if name == 'Mstar':
+            param_values[name] = np.log10(f['GALAXY PROPERTIES'].data['M_star'][rows])
+        else:
+            param_values[name] = f['POSTERIOR PDF'].data[name][rows]
 
     output = OrderedDict()
     samplerFlag = 0 #This will be set to 1 if any of the limits are 
                     #beyond the probability sampled by multinest
     for key, value in param_values.iteritems():
 
-        sort_ = np.argsort(value)
+        if len(rows) > 10:
+            sort_ = np.argsort(value)
 
-        cumul_pdf = np.cumsum(probability[sort_])
-        cumul_pdf /= cumul_pdf[len(cumul_pdf)-1]
+            cumul_pdf = np.cumsum(probability[sort_])
+            cumul_pdf /= cumul_pdf[len(cumul_pdf)-1]
 
-        # Get the interpolant of the cumulative probability
-        f_interp = interp1d(cumul_pdf, value[sort_])
+            # Get the interpolant of the cumulative probability
+            f_interp = interp1d(cumul_pdf, value[sort_])
 
-        # You shoud integrate rather than summing here
-        mean = np.sum(probability * value) / np.sum(probability)
+            # You shoud integrate rather than summing here
+            mean = np.sum(probability * value) / np.sum(probability)
 
-        median = f_interp(0.5)
+            median = f_interp(0.5)
 
-        interval = OrderedDict()
-        for lev in levels:
-            lower_lev = 0.5*(1.-lev/100.)
-            upper_lev = 1.-0.5*(1.-lev/100.)
-            #check if either limit is lower or higher than current samples
-            if lower_lev < cumul_pdf[0]:
-              lower_lev = cumul_pdf[0]
-              samplerFlag = 1
-            if upper_lev > cumul_pdf[-1]:
-              upper_lev = cumul_pdf[-1]
-              samplerFlag = 1
-            low, high = f_interp([lower_lev, upper_lev])
-            interval[str(lev)] = np.array([low,high])
+            interval = OrderedDict()
+            for lev in levels:
+                lower_lev = 0.5*(1.-lev/100.)
+                upper_lev = 1.-0.5*(1.-lev/100.)
+                #check if either limit is lower or higher than current samples
+                if lower_lev < cumul_pdf[0]:
+                    lower_lev = cumul_pdf[0]
+                    samplerFlag = 1
+                if upper_lev > cumul_pdf[-1]:
+                    upper_lev = cumul_pdf[-1]
+                    samplerFlag = 1
+                low, high = f_interp([lower_lev, upper_lev])
+                interval[str(lev)] = np.array([low,high])
 
-        output[key] = {'mean':mean, 'median':median, 'regions':interval}
+            output[key] = {'mean':mean, 'median':median, 'regions':interval}
+        else:
+            output[key] = {'mean':-99, 'median':-99, 'regions':np.array([-99,-99])}
+        
+    if openFile:
+        f.close()
+        
     return output,samplerFlag
 
 if __name__ == '__main__':
@@ -440,7 +501,7 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--chi2',
-        help="add average of chi2 of last 10 samples?  Not the best metric but useful for comparing to minimum chi2 based codes",
+        help="add average of chi2 of last 10 samples?  Not the best metric but useful for comparing to minimum chi2 based codes (default False)",
         action="store_true",
         default=False,
         dest="chi2"
@@ -456,7 +517,7 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--q-flag',
-        help="add EAZY style q-flag in output - requires credible intervals with a level of 99",
+        help="add EAZY style q-flag in output - requires credible intervals with a level of 99 (default False)",
         action="store_true",
         default=False,
         dest="qFlag"
@@ -464,11 +525,20 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--n-filt',
-        help="number of filters, required for the reduced chi2 in the quality flag",
+        help="number of filters, required for the reduced chi2 in the quality flag (default 9)",
         action="store",
         type=int,
         default=9,
         dest="nFilt"
+    )
+    
+    parser.add_argument(
+        '--interim-results',
+        help="Specify a folder name where pickle files will be stored for each object containing all the information derived within this script.  The script will search the folder for the [ID].p file and read that in rather than re-calculate things for this file.  Please note that if you use more than one processor a tmp/ folder will be made in the folder that you run this script from unless you specify the filename here.",
+        action="store",
+        type=str,
+        default=None,
+        dest="interimResults"
     )
 
 #    if args.qFlag: #We need the upper an lower limits of the 99% credible interval
@@ -636,11 +706,19 @@ if __name__ == '__main__':
     data = list()
     zProb = list()
     chi2 = list()
+    t = list()
     if args.nproc <= 0:
 
         for indx in range(len(input_IDs)):
 #        for indx in [3783]:
+
+
+            t0 = time.clock()
             ID = input_IDs[indx]
+
+            #read BEAGLE.fits.gz file to pass to other functions here
+            f = ReadInfoFromFitsFiles(ID)
+            
             d = extract_data(ID, 
                     n_par=n_par, 
                     redshift_index=paramDict["redshift"]
@@ -650,7 +728,8 @@ if __name__ == '__main__':
             if args.credible_regions is not None:
                 c,flag = get1DInterval(ID, 
                         param_names=param_names, 
-                        levels=args.credible_regions
+                        levels=args.credible_regions,
+                        f=f
                         )
 
                 data_cred_region.append(c)
@@ -658,14 +737,15 @@ if __name__ == '__main__':
 
             if args.zLim is not None:
                 p = IntegratedProbAboveZ(ID,
-                        args.zLim
+                        args.zLim,
+                        f=f
                         )
 
                 data_zLim_probs.append(p)
 
             if args.chi2 or args.qFlag:
                 chi2Modes = {}
-                c = min_chi2(ID)
+                c = min_chi2(ID,f=f)
                 chi2Modes["mean"] = (c)
                 
             #And split information by mode
@@ -675,32 +755,34 @@ if __name__ == '__main__':
                     mStarModes = {}
                     m,flag = get1DInterval(ID,
                               param_names=['Mstar'],
-                              levels=args.credible_regions)
+                              levels=args.credible_regions,
+                              f=f)
                     mStarModes["mean"] = m
                 if args.qFlag:
                     qModes = {}
-                    p_dz_02 = IntegratedProbAboveZ(ID, data_cred_region[-1]["redshift"]["mean"]-0.2) - \
-                              IntegratedProbAboveZ(ID, data_cred_region[-1]["redshift"]["mean"]+0.2)
-                    temp,flags = get1DInterval(ID, param_names=["redshift"], levels=[99.])
+                    p_dz_02 = IntegratedProbAboveZ(ID, data_cred_region[-1]["redshift"]["mean"]-0.2, f=f) - \
+                              IntegratedProbAboveZ(ID, data_cred_region[-1]["redshift"]["mean"]+0.2, f=f)
+                    temp,flags = get1DInterval(ID, param_names=["redshift"], levels=[99.], f=f)
                     z99up_low = temp["redshift"]["regions"][str(99.)][1] - temp["redshift"]["regions"][str(99.)][0]
                     qModes["mean"] = (chi2Modes["mean"]/args.nFilt) * z99up_low/p_dz_02
                     
                 for k in data[-1].keys():
                     mode_index = k.split('_')[1]
-                    rows = get_mode_rows(ID, args.results_dir, param_names=["mass","redshift"], param_indices=[1,2], mode_index=mode_index)
+                    rows = get_mode_rows(ID, args.results_dir, param_names=["mass","redshift"], param_indices=[1,2], mode_index=mode_index, hdulist=f)
                     if args.Mstar:
                         m,flag = get1DInterval(ID,
                                  param_names=['Mstar'],
                                  levels=args.credible_regions,
-                                 rows=rows)
+                                 rows=rows,
+                                 f=f)
                         mStarModes[k] = m
                     if args.chi2 or args.qFlag:
                         c = min_chi2(ID, rows=rows)
                         chi2Modes[k] = c
                     if args.qFlag:
-                        p_dz_02 = IntegratedProbAboveZ(ID, data[-1][k]["posterior_mean"][paramDict["redshift"]-1]-0.2) - \
-                                     IntegratedProbAboveZ(ID, data[-1][k]["posterior_mean"][paramDict["redshift"]-1]+0.2)
-                        temp,flags = get1DInterval(ID, param_names=["redshift"], levels=[99.], rows=rows)
+                        p_dz_02 = IntegratedProbAboveZ(ID, data[-1][k]["posterior_mean"][paramDict["redshift"]-1]-0.2,f=f) - \
+                                     IntegratedProbAboveZ(ID, data[-1][k]["posterior_mean"][paramDict["redshift"]-1]+0.2,f=f)
+                        temp,flags = get1DInterval(ID, param_names=["redshift"], levels=[99.], rows=rows,f=f)
                         z99up_low = temp["redshift"]["regions"][str(99.)][1] - temp["redshift"]["regions"][str(99.)][0]
                         qModes[k] = (chi2Modes[k]/args.nFilt) * z99up_low/p_dz_02
 #                        sys.exit()
@@ -720,6 +802,7 @@ if __name__ == '__main__':
                 if args.qFlag:
                     qFlag.append(None)
                     
+            t.append(time.clock()-t0)
         
         # Otherwise you use pathos to run in parallel on multiple CPUs
     #    else:
@@ -744,6 +827,7 @@ if __name__ == '__main__':
     for i, indx in enumerate(input_idx):
 
         d = data[i]
+        
 #        if d is not None:
 #            print 'd: ', d
 
@@ -819,7 +903,6 @@ if __name__ == '__main__':
             
             
 
-
     myCols = list()
     for i, (key, col) in enumerate(newCols.iteritems()):
         tmpCol = Column(col, name=key, dtype=dictKeys[key]["type"], format='%'+dictKeys[key]['format'])
@@ -834,3 +917,6 @@ if __name__ == '__main__':
     file_name = os.path.splitext(args.inputCat)[0] + '_Beagle_VAC.fits'
     print "Output (FITS) file_name: ", file_name
     newTable.write(file_name, format="fits", overwrite=True)
+
+print "Max object calculation time: "+str(np.max(t))
+print "Mean object calculation time: "+str(np.mean(t))
