@@ -135,11 +135,14 @@ def min_chi2(ID, rows=None, f=None):
   if rows is None:
     rows = np.fromiter((x for x in range(len(f['POSTERIOR PDF'].data['chi_square']))),np.int)
   c = f['POSTERIOR PDF'].data['chi_square'][rows]
-   
+
   if openFile:
     f.close()
-      
-  return np.min(c)
+
+  if len(rows) > 2:
+    return np.min(c)
+  else:
+    return -99
 
 
 def RoundToSigFigs( x, sigfigs ):
@@ -202,6 +205,7 @@ def get_mode_rows(ID, results_dir, param_names, param_indices, mode_index, hduli
         for name, indx in zip(param_names, param_indices):
           value = split[1+indx]
           values[name].append(float(value))
+
 
   n = len(values[param_names[0]])
   n_par = len(param_names)
@@ -418,6 +422,7 @@ def get1DInterval(ID, param_names, levels=[68., 95.], rows=None, f=None):
         
     
   else:
+    output = OrderedDict()
     for name in param_names:
       interval = OrderedDict()
       for lev in levels:
@@ -694,6 +699,9 @@ if __name__ == '__main__':
   param_names = ["redshift", "mass"]
   
   pickleFileDir = args.interimResults
+  # check if folder exists and make it if not
+  if not os.path.exists(args.interimResults):
+    os.system("mkdir "+args.interimResults)
 
   dictKeys = OrderedDict()
 
@@ -867,10 +875,8 @@ if __name__ == '__main__':
     #Check if the pickle file exists for this object
     if os.path.isfile(outputPickleFile):
       outputDict = pickle.load(open(outputPickleFile,'r'))
-      print outputPickleFile
       d = outputDict['data']
-      print outputDict
-
+      
       if d is None:
         continue
 
