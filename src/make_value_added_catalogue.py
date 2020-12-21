@@ -138,12 +138,11 @@ def min_chi2(ID, rows=None, f=None):
 
   if openFile:
     f.close()
-
-  if len(rows) > 2:
-    return np.min(c)
+      
+  if (len(c) < 1):
+  	return -9999
   else:
-    return -99
-
+  	return np.min(c)
 
 def RoundToSigFigs( x, sigfigs ):
   """
@@ -658,6 +657,17 @@ if __name__ == '__main__':
         required=True
   )
 
+  # ID list
+  parser.add_argument(
+        '-idlist','--id_number_list',
+        help="List of ID numbers for a subsample?",
+        action="store",
+        type=str,
+        dest="id_number_list",
+        required=False
+  )
+
+
 #    if args.qFlag: #We need the upper an lower limits of the 99% credible interval
 #        if args.credible_regions is not None:
 #            print args.credible_regions
@@ -680,8 +690,22 @@ if __name__ == '__main__':
   # Read the input catalogue
   inputData = Table.read(args.inputCat)
 
+  # Create a subsample given an ID number list
+  if (args.id_number_list):
+    ID_input_file = np.loadtxt(args.id_number_list)
+    if (len(ID_input_file.shape) > 1):
+      input_IDs = ID_input_file[:,0].astype(int)
+    else:
+      input_IDs = ID_input_file.astype(int)
+    #ID_numbers = ID_input_file
+    n_input = len(input_IDs)
+  else:
+	# ID in the input catalogue
+	input_IDs = extract_IDs(inputData, key='ID')
+	n_input = len(inputData.field(0))
+	
   # ID in the input catalogue
-  input_IDs = extract_IDs(inputData, key='ID')
+  #input_IDs = extract_IDs(inputData, key='ID')
 
   # Read parameter file
   config = ConfigParser.SafeConfigParser()
@@ -694,7 +718,6 @@ if __name__ == '__main__':
 
   config.read(param_file)
 
-  n_input = len(inputData.field(0))
   # Columns to be added to the catalogues
   param_names = ["redshift", "mass"]
   
@@ -842,7 +865,6 @@ if __name__ == '__main__':
   if args.nproc <= 0:
 
     for indx in range(len(input_IDs)):
-
         
       t0 = time.clock()
       ID = input_IDs[indx]
