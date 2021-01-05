@@ -399,7 +399,10 @@ def get1DInterval(ID, param_names, levels=[68., 95.], rows=None, f=None):
       # You shoud integrate rather than summing here
       mean = np.sum(probability * value) / np.sum(probability)
 
-      median = f_interp(0.5)
+      if (cumul_pdf[0] < 0.5):
+        median = f_interp(0.5)
+      else:
+        median = -9999
 
       interval = OrderedDict()
       for lev in levels:
